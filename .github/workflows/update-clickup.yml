@@ -1,0 +1,78 @@
+name: Update ClickUp Status
+
+# Reusable workflow: updates ClickUp task status after deployment.
+# Extracts CU-<taskId> from the merge commit message or branch name.
+#
+# Usage:
+#   update-clickup:
+#     needs: deploy
+#     uses: ParamountDataManagement/.github/.github/workflows/update-clickup.yml@main
+#     with:
+#       status: IN DEV          # or IN QA, IN PRODUCTION
+#     secrets:
+#       CLICKUP_API_TOKEN: ${{ secrets.CLICKUP_API_TOKEN }}
+
+on:
+  workflow_call:
+    inputs:
+      status:
+        description: 'Target ClickUp status (IN DEV, IN QA, IN PRODUCTION)'
+        required: true
+        type: string
+    secrets:
+      CLICKUP_API_TOKEN:
+        required: true
+
+jobs:
+  update-clickup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Update ClickUp Task Status
+        env:
+          CLICKUP_API_TOKEN: ${{ secrets.CLICKUP_API_TOKEN }}
+          STATUS: ${{ inputs.status }}
+        run: |
+          set -euo pipefail
+
+          # Validate status
+          case "$STATUS" in
+            "IN DEV"|"IN QA"|"IN PRODUCTION") ;;
+            *)
+              echo "::error::Invalid status '$STATUS'. Allowed: IN DEV, IN QA, IN PRODUCTION"
+              exit 1
+              ;;
+          esac
+
+          # Extract CU-<taskId> from merge commit message or head_ref
+          BRANCH_NAME="${{ github.head_ref }}"
+          if [[ -z "$BRANCH_NAME" ]]; then
+            BRANCH_NAME=$(git log -1 --pretty=%B | head -1)
+          fi
+
+          echo "Extracting task ID from: $BRANCH_NAME"
+
+          TASK_ID=$(echo "$BRANCH_NAME" | grep -oE 'CU-[a-zA-Z0-9]{6,}' | head -1 || echo "")
+          if [[ -z "$TASK_ID" ]]; then
+            echo "No ClickUp task ID found. Skipping."
+            exit 0
+          fi
+
+          CLEAN_ID="${TASK_ID#CU-}"
+          echo "Updating $TASK_ID → $STATUS"
+
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PUT \
+            --connect-timeout 5 --max-time 20 --retry 2 --retry-delay 1 \
+            "https://api.clickup.com/api/v2/task/$CLEAN_ID" \
+            -H "Authorization: $CLICKUP_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"status\": \"$STATUS\"}" 2>/dev/null || echo "000")
+
+          if [[ "$HTTP_CODE" == "200" ]]; then
+            echo "✅ Updated $TASK_ID to '$STATUS'"
+          else
+            echo "::warning::ClickUp API returned HTTP $HTTP_CODE (non-blocking)"
+          fi
