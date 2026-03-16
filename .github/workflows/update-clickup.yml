@@ -1,7 +1,7 @@
 name: Update ClickUp Status
 
 # Reusable workflow: updates ClickUp task status after deployment.
-# Extracts CU-<taskId> from the merge commit message or branch name.
+# Scans ALL commits in the push for CU-<taskId> references and updates each.
 #
 # Usage:
 #   update-clickup:
@@ -29,12 +29,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
       - name: Update ClickUp Task Status
         env:
           CLICKUP_API_TOKEN: ${{ secrets.CLICKUP_API_TOKEN }}
           STATUS: ${{ inputs.status }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
 
@@ -47,32 +49,52 @@ jobs:
               ;;
           esac
 
-          # Extract CU-<taskId> from merge commit message or head_ref
-          BRANCH_NAME="${{ github.head_ref }}"
-          if [[ -z "$BRANCH_NAME" ]]; then
-            BRANCH_NAME=$(git log -1 --pretty=%B | head -1)
+          # Extract ALL unique CU-<taskId> references from all commits in this push.
+          # This handles batch merges where multiple PRs deploy together.
+          TASK_IDS=""
+
+          if [[ -n "$BEFORE_SHA" && "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]]; then
+            # Normal push: scan all commits between before and after
+            TASK_IDS=$(git log "${BEFORE_SHA}..${AFTER_SHA}" --pretty=%B 2>/dev/null | \
+              grep -oE 'CU-[a-zA-Z0-9]{6,}' | sort -u || echo "")
           fi
 
-          echo "Extracting task ID from: $BRANCH_NAME"
+          # Fallback: if no commits in range (first push, force push, etc.),
+          # check the latest commit message and head_ref
+          if [[ -z "$TASK_IDS" ]]; then
+            BRANCH_NAME="${{ github.head_ref }}"
+            if [[ -z "$BRANCH_NAME" ]]; then
+              BRANCH_NAME=$(git log -1 --pretty=%B | head -1)
+            fi
+            TASK_IDS=$(echo "$BRANCH_NAME" | grep -oE 'CU-[a-zA-Z0-9]{6,}' | sort -u || echo "")
+          fi
 
-          TASK_ID=$(echo "$BRANCH_NAME" | grep -oE 'CU-[a-zA-Z0-9]{6,}' | head -1 || echo "")
-          if [[ -z "$TASK_ID" ]]; then
-            echo "No ClickUp task ID found. Skipping."
+          if [[ -z "$TASK_IDS" ]]; then
+            echo "No ClickUp task IDs found in any commits. Skipping."
             exit 0
           fi
 
-          CLEAN_ID="${TASK_ID#CU-}"
-          echo "Updating $TASK_ID → $STATUS"
+          UPDATED=0
+          FAILED=0
 
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PUT \
-            --connect-timeout 5 --max-time 20 --retry 2 --retry-delay 1 \
-            "https://api.clickup.com/api/v2/task/$CLEAN_ID" \
-            -H "Authorization: $CLICKUP_API_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "{\"status\": \"$STATUS\"}" 2>/dev/null || echo "000")
+          for TASK_ID in $TASK_IDS; do
+            CLEAN_ID="${TASK_ID#CU-}"
+            echo "Updating $TASK_ID → $STATUS"
 
-          if [[ "$HTTP_CODE" == "200" ]]; then
-            echo "✅ Updated $TASK_ID to '$STATUS'"
-          else
-            echo "::warning::ClickUp API returned HTTP $HTTP_CODE (non-blocking)"
-          fi
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PUT \
+              --connect-timeout 5 --max-time 20 --retry 2 --retry-delay 1 \
+              "https://api.clickup.com/api/v2/task/$CLEAN_ID" \
+              -H "Authorization: $CLICKUP_API_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{\"status\": \"$STATUS\"}" 2>/dev/null || echo "000")
+
+            if [[ "$HTTP_CODE" == "200" ]]; then
+              echo "✅ Updated $TASK_ID to '$STATUS'"
+              UPDATED=$((UPDATED + 1))
+            else
+              echo "::warning::ClickUp API returned HTTP $HTTP_CODE for $TASK_ID (non-blocking)"
+              FAILED=$((FAILED + 1))
+            fi
+          done
+
+          echo "Summary: $UPDATED updated, $FAILED failed out of $(echo "$TASK_IDS" | wc -w | tr -d ' ') tasks"
