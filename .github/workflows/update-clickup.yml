@@ -77,9 +77,31 @@ jobs:
           UPDATED=0
           FAILED=0
 
+          # Status progression order — never regress past deploy statuses
+          declare -A STATUS_ORDER=(
+            ["backlog"]=0 ["ready for dev"]=1 ["in progress"]=2
+            ["in code review"]=3 ["merged"]=4 ["in dev"]=5
+            ["in qa"]=6 ["in production"]=7 ["closed"]=8
+          )
+          TARGET_ORDER=${STATUS_ORDER[$(echo "$STATUS" | tr '[:upper:]' '[:lower:]')]}
+
           for TASK_ID in $TASK_IDS; do
             CLEAN_ID="${TASK_ID#CU-}"
-            echo "Updating $TASK_ID → $STATUS"
+
+            # Check current status before updating — never regress
+            CURRENT_STATUS=$(curl -s --connect-timeout 5 --max-time 10 \
+              "https://api.clickup.com/api/v2/task/$CLEAN_ID" \
+              -H "Authorization: $CLICKUP_API_TOKEN" 2>/dev/null | \
+              jq -r '.status.status // "unknown"' 2>/dev/null || echo "unknown")
+
+            CURRENT_ORDER=${STATUS_ORDER[$(echo "$CURRENT_STATUS" | tr '[:upper:]' '[:lower:]')]}
+
+            if [[ -n "$CURRENT_ORDER" && -n "$TARGET_ORDER" && "$CURRENT_ORDER" -ge "$TARGET_ORDER" ]]; then
+              echo "⏭️  Skipping $TASK_ID — already '$CURRENT_STATUS' (would regress to '$STATUS')"
+              continue
+            fi
+
+            echo "Updating $TASK_ID → $STATUS (was '$CURRENT_STATUS')"
 
             HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PUT \
               --connect-timeout 5 --max-time 20 --retry 2 --retry-delay 1 \
