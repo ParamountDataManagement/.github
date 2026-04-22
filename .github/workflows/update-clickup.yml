@@ -37,6 +37,10 @@ jobs:
           STATUS: ${{ inputs.status }}
           BEFORE_SHA: ${{ github.event.before }}
           AFTER_SHA: ${{ github.sha }}
+          HEAD_REF: ${{ github.head_ref }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_API_URL: ${{ github.api_url }}
         run: |
           set -euo pipefail
 
@@ -60,17 +64,30 @@ jobs:
           fi
 
           # Fallback: if no commits in range (first push, force push, etc.),
-          # check the latest commit message and head_ref
+          # check the head_ref and latest commit message
           if [[ -z "$TASK_IDS" ]]; then
-            BRANCH_NAME="${{ github.head_ref }}"
+            BRANCH_NAME="$HEAD_REF"
             if [[ -z "$BRANCH_NAME" ]]; then
               BRANCH_NAME=$(git log -1 --pretty=%B | head -1)
             fi
             TASK_IDS=$(echo "$BRANCH_NAME" | grep -oE 'CU-[a-zA-Z0-9]{6,}' | sort -u || echo "")
           fi
 
+          # Final fallback for merge/backport pushes: inspect PR metadata associated
+          # with the pushed commit. This catches cases where the push is a merge
+          # commit on main/production and the commit message itself does not contain
+          # a CU-<taskId>, but the PR body/title/head branch does.
+          if [[ -z "$TASK_IDS" && -n "$GITHUB_TOKEN" ]]; then
+            PR_TEXT=$(curl -fsSL \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/commits/$AFTER_SHA/pulls" 2>/dev/null | \
+              jq -r '.[] | [.title, (.body // ""), .head.ref] | join("\n")' 2>/dev/null || true)
+            TASK_IDS=$(echo "$PR_TEXT" | grep -oE 'CU-[a-zA-Z0-9]{6,}' | sort -u || echo "")
+          fi
+
           if [[ -z "$TASK_IDS" ]]; then
-            echo "No ClickUp task IDs found in any commits. Skipping."
+            echo "::warning::No ClickUp task IDs found in commits, branch names, or associated PR metadata. Skipping status update. status=$STATUS before_sha=$BEFORE_SHA after_sha=$AFTER_SHA repository=$GITHUB_REPOSITORY"
             exit 0
           fi
 
