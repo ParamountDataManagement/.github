@@ -37,6 +37,7 @@ jobs:
           STATUS: ${{ inputs.status }}
           BEFORE_SHA: ${{ github.event.before }}
           AFTER_SHA: ${{ github.sha }}
+          HEAD_REF: ${{ github.head_ref }}
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_API_URL: ${{ github.api_url }}
@@ -65,7 +66,7 @@ jobs:
           # Fallback: if no commits in range (first push, force push, etc.),
           # check the head_ref and latest commit message
           if [[ -z "$TASK_IDS" ]]; then
-            BRANCH_NAME="${{ github.head_ref }}"
+            BRANCH_NAME="$HEAD_REF"
             if [[ -z "$BRANCH_NAME" ]]; then
               BRANCH_NAME=$(git log -1 --pretty=%B | head -1)
             fi
@@ -86,7 +87,7 @@ jobs:
           fi
 
           if [[ -z "$TASK_IDS" ]]; then
-            echo "No ClickUp task IDs found in commits, branch names, or associated PR metadata. Skipping."
+            echo "::warning::No ClickUp task IDs found in commits, branch names, or associated PR metadata. Skipping status update. status=$STATUS before_sha=$BEFORE_SHA after_sha=$AFTER_SHA repository=$GITHUB_REPOSITORY"
             exit 0
           fi
 
