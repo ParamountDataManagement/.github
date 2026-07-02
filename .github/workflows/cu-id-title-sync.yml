@@ -16,7 +16,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 concurrency:
   group: cu-id-title-${{ github.event.pull_request.number }}
@@ -24,12 +23,34 @@ concurrency:
 
 jobs:
   sync-cu-id:
+    name: Sync CU-id into PR title
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # needed to append the CU-id to the PR title via `gh pr edit`
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          submodules: recursive
+          # Do not let private-submodule auth failure fail the PR before our
+          # non-blocking guard can run. We populate the standards submodule
+          # best-effort below, then skip cleanly if the parser is unavailable.
+          submodules: false
           persist-credentials: false
+
+      - name: Populate canonical parser submodule if accessible
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "git@github.com:"
+          git submodule update --init --depth=1 .claude-standards
+          status=$?
+          git config --global --unset-all url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf || true
+
+          if [ "$status" -ne 0 ]; then
+            echo "Could not populate .claude-standards with the built-in token — continuing so the sync step can skip non-blockingly."
+          fi
+          exit 0
 
       - name: Ensure the PR title carries the branch's CU-<id>(s)
         env:
@@ -50,7 +71,7 @@ jobs:
 
           LIB=".claude-standards/ci/clickup/clickup-id.sh"
           if [ ! -f "$LIB" ]; then
-            echo "No canonical parser vendored in $REPO ($LIB) — skipping (non-blocking)."
+            echo "Canonical parser not available in this checkout ($LIB) — skipping (non-blocking)."
             exit 0
           fi
           # shellcheck source=/dev/null
