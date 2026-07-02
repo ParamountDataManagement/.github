@@ -1,0 +1,82 @@
+name: CU-id title sync
+
+# ORG-WIDE title sync (applied to ClickUp-consumer repos via an org ruleset).
+# Copies the ClickUp CU-id from the branch name into the PR title using the
+# built-in GITHUB_TOKEN, so squash-merge (with "Default to PR title") carries the
+# id into the commit and the deploy-time updater resolves it with a local scan —
+# no managed PAT anywhere.
+#
+# Single source of truth for parsing: the target repo's vendored canonical lib
+# .claude-standards/ci/clickup/clickup-id.sh (pdm-claude-standards). No regex is
+# defined in this workflow. Repos without the vendored lib are a clean no-op.
+
+on:
+  pull_request:
+    types: [opened, reopened, edited, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: cu-id-title-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  sync-cu-id:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Ensure the PR title carries the branch's CU-<id>(s)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.head_ref }}
+          TITLE: ${{ github.event.pull_request.title }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -euo pipefail
+
+          # Fork PRs get a read-only token — cannot (and must not) edit.
+          if [ "$HEAD_REPO" != "$REPO" ]; then
+            echo "Fork PR ($HEAD_REPO) — read-only token, skipping (non-blocking)."
+            exit 0
+          fi
+
+          LIB=".claude-standards/ci/clickup/clickup-id.sh"
+          if [ ! -f "$LIB" ]; then
+            echo "No canonical parser vendored in $REPO ($LIB) — skipping (non-blocking)."
+            exit 0
+          fi
+          # shellcheck source=/dev/null
+          . "$LIB"
+
+          ids="$(printf '%s' "$BRANCH" | clickup_extract_ids || true)"
+          if [ -z "$ids" ]; then
+            echo "No CU-id in branch '$BRANCH' — nothing to sync (non-blocking)."
+            exit 0
+          fi
+
+          suffix=""
+          while IFS= read -r id; do
+            [ -z "$id" ] && continue
+            if printf '%s' "$TITLE" | grep -qiF "$id"; then continue; fi
+            suffix="$suffix ($id)"
+          done <<EOF
+          $ids
+          EOF
+
+          if [ -z "$suffix" ]; then
+            echo "PR title already carries the branch CU-id(s) — no change."
+            exit 0
+          fi
+
+          new_title="${TITLE}${suffix}"
+          echo "before: $TITLE"
+          echo "after:  $new_title"
+          gh pr edit "$PR" --repo "$REPO" --title "$new_title"
