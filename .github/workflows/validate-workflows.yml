@@ -22,11 +22,20 @@ jobs:
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
+      # The hosted runner image may carry a stale Chrome apt index; remove it
+      # before installing shellcheck so an unrelated package mirror failure does
+      # not prevent workflow validation.
       - name: Install shellcheck
         run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
           sudo apt-get update
           sudo apt-get install -y shellcheck
 
       - name: Run actionlint
         run: |
           actionlint -shellcheck="$(command -v shellcheck)"
+
+      - name: Validate CircleCI round-trip action
+        run: |
+          shellcheck .github/actions/circleci-round-trip/round_trip.sh tests/circleci-round-trip.sh
+          ./tests/circleci-round-trip.sh

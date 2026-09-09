@@ -1,0 +1,76 @@
+name: CircleCI Excel round-trip
+
+on:
+  workflow_call:
+    inputs:
+      project:
+        description: CircleCI project slug
+        required: true
+        type: string
+      branch:
+        description: Branch whose CircleCI configuration should run
+        required: true
+        type: string
+      triggered_by:
+        description: Trigger provenance written to CircleCI pipeline parameters
+        required: true
+        type: string
+      upstream_sha:
+        description: Optional upstream commit SHA written to CircleCI pipeline parameters
+        required: false
+        default: ""
+        type: string
+      timeout_seconds:
+        description: Maximum wait in seconds; capped at 1140 because this job has a 20-minute timeout
+        required: false
+        default: "900"
+        type: string
+      poll_seconds:
+        description: Delay between CircleCI workflow polls
+        required: false
+        default: "15"
+        type: string
+      empty_grace_seconds:
+        description: Grace period for workflow creation and dynamic-config target visibility
+        required: false
+        default: "120"
+        type: string
+      max_transient_failures:
+        description: Consecutive CircleCI API failures tolerated while polling
+        required: false
+        default: "3"
+        type: string
+    secrets:
+      CIRCLECI_API_TOKEN:
+        description: Organization-managed CircleCI API token
+        required: true
+
+jobs:
+  round-trip:
+    runs-on: ubuntu-latest
+    # Keep a 60-second buffer for runner setup and teardown. The action rejects
+    # timeout_seconds values above the matching 1140-second cap.
+    timeout-minutes: 20
+    permissions:
+      # The action is stored in this organization repository. The
+      # runner needs read access to download it when this workflow is called
+      # from another repository.
+      contents: read
+    steps:
+      - name: Trigger and await CircleCI round-trip
+        # No release tag exists yet. This temporary main reference keeps the
+        # central workflow usable through squash merge; after merge, pin this
+        # to the resulting main commit and update callers to that immutable ref.
+        uses: ParamountDataManagement/.github/.github/actions/circleci-round-trip@main
+        with:
+          project: ${{ inputs.project }}
+          branch: ${{ inputs.branch }}
+          triggered-by: ${{ inputs.triggered_by }}
+          upstream-sha: ${{ inputs.upstream_sha }}
+          timeout-seconds: ${{ inputs.timeout_seconds }}
+          poll-seconds: ${{ inputs.poll_seconds }}
+          empty-grace-seconds: ${{ inputs.empty_grace_seconds }}
+          max-transient-failures: ${{ inputs.max_transient_failures }}
+        env:
+          CIRCLECI_API_TOKEN: ${{ secrets.CIRCLECI_API_TOKEN }}
+          CIRCLECI_MAX_TIMEOUT_SECONDS: "1140"
