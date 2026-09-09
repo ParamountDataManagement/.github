@@ -26,8 +26,8 @@ done
 grep -Fq "CIRCLECI_API_TOKEN: \${{ secrets.CIRCLECI_API_TOKEN }}" "$workflow_file" \
   || fail "workflow does not use the canonical CIRCLECI_API_TOKEN secret"
 action_ref=$(sed -nE 's/^        uses: ParamountDataManagement\/\.github\/\.github\/actions\/circleci-round-trip@(.+)$/\1/p' "$workflow_file")
-[[ "$action_ref" == "main" ]] \
-  || fail "central workflow must use reachable main until the post-merge SHA exists: $action_ref"
+[[ "$action_ref" =~ ^[0-9a-f]{40}$ ]] \
+  || fail "central workflow must use an immutable reachable commit SHA: $action_ref"
 grep -Fq "post-merge commit on" "$root_dir/.github/CIRCLECI-ROUND-TRIP-RELEASE.md" \
   || fail "release contract does not require callers to use the post-merge main commit"
 
