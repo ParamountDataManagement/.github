@@ -22,11 +22,11 @@ jobs:
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
+      # The hosted runner image may carry a stale Chrome apt index; remove it
+      # before installing shellcheck so an unrelated package mirror failure does
+      # not prevent workflow validation.
       - name: Install shellcheck
         run: |
-          # The hosted runner image may carry a stale Chrome apt index; it is
-          # unrelated to this workflow and can make apt-get update fail before
-          # shellcheck is installed.
           sudo rm -f /etc/apt/sources.list.d/google-chrome.list
           sudo apt-get update
           sudo apt-get install -y shellcheck
