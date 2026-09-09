@@ -34,8 +34,13 @@ fi
 for action_file in .github/actions/circleci-round-trip/action.yml .github/actions/circleci-round-trip/round_trip.sh; do
   git -C "$root_dir" cat-file -e "$action_ref:$action_file" 2>/dev/null \
     || fail "pinned commit $action_ref does not contain $action_file"
-  git -C "$root_dir" show "$action_ref:$action_file" | diff -u - "$root_dir/$action_file" \
-    || fail "working tree $action_file differs from pinned commit $action_ref"
+  # A release-pin PR intentionally changes the workflow/action contract while
+  # still pointing at the previous reachable release. Enforce byte equality on
+  # the post-merge push to main, where the pin must match the shipped files.
+  if [[ "${GITHUB_EVENT_NAME:-}" == "push" && "${GITHUB_REF:-}" == "refs/heads/main" ]]; then
+    git -C "$root_dir" show "$action_ref:$action_file" | diff -u - "$root_dir/$action_file" \
+      || fail "working tree $action_file differs from pinned commit $action_ref"
+  fi
 done
 grep -Fq "post-merge commit on" "$root_dir/.github/CIRCLECI-ROUND-TRIP-RELEASE.md" \
   || fail "release contract does not require callers to use the post-merge main commit"
