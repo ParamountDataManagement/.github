@@ -6,17 +6,18 @@ The reusable workflow is the public entry point. Callers must pin
 source commit SHA, so a SHA copied from a pull request is not a release
 reference.
 
-There is no stable release tag for this workflow yet. Until the merge commit
-exists, the central workflow uses `@main` for its internal action reference so
-that the action remains reachable after squash merge. As a post-merge release
-step:
+The reusable workflow and its internal composite action are pinned
+independently. The workflow is pinned by callers to the post-merge commit that
+contains the contract; the workflow pins the internal action to the prior
+post-merge commit that contains the action files. For this release:
 
-1. Replace that internal `@main` reference with the resulting immutable `main`
-   commit SHA.
-2. Update every caller to the same post-merge `main` commit SHA.
-3. In a later release, a maintained release tag may replace the SHA only after
-   the tag is created and protected according to the repository's release
-   policy.
+1. The workflow file was released at `453f0c3d6871c88428aae5b6d49c92efaf2902ad`.
+2. Its internal action is pinned to that immutable commit.
+3. Callers must be updated to the follow-up workflow commit that contains this
+   internal pin before they merge.
+4. Future releases repeat the process: merge the workflow change, then pin the
+   internal action to the previous release commit and update callers to the new
+   workflow commit. A protected release tag may replace these SHA pins later.
 
 The reusable workflow caps `timeout_seconds` at 1140 seconds. Its GitHub job
 has a 20-minute timeout, leaving 60 seconds for runner setup and teardown.
