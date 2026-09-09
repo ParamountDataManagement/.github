@@ -13,8 +13,9 @@ inputs:
     description: Trigger provenance written to CircleCI pipeline parameters
     required: true
   upstream-sha:
-    description: Upstream commit SHA written to CircleCI pipeline parameters
-    required: true
+    description: Optional upstream commit SHA written to CircleCI pipeline parameters
+    required: false
+    default: ""
   timeout-seconds:
     description: Maximum time to wait for the round-trip workflow
     required: false

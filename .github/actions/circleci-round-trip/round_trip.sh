@@ -6,8 +6,6 @@ set -euo pipefail
 : "${CIRCLECI_PROJECT:?CIRCLECI_PROJECT must be provided by the caller}"
 : "${CIRCLECI_BRANCH:?CIRCLECI_BRANCH must be provided by the caller}"
 : "${CIRCLECI_TRIGGERED_BY:?CIRCLECI_TRIGGERED_BY must be provided by the caller}"
-: "${CIRCLECI_UPSTREAM_SHA:?CIRCLECI_UPSTREAM_SHA must be provided by the caller}"
-
 api_base="${CIRCLECI_API_BASE:-https://circleci.com/api/v2}"
 timeout_s="${CIRCLECI_TIMEOUT_SECONDS:-900}"
 poll_s="${CIRCLECI_POLL_SECONDS:-15}"
@@ -17,8 +15,8 @@ max_transient="${CIRCLECI_MAX_TRANSIENT_FAILURES:-3}"
 payload=$(jq -cn \
   --arg branch "$CIRCLECI_BRANCH" \
   --arg triggered_by "$CIRCLECI_TRIGGERED_BY" \
-  --arg upstream_sha "$CIRCLECI_UPSTREAM_SHA" \
-  '{branch: $branch, parameters: {"run-excel-round-trip": true, triggered_by: $triggered_by, upstream_sha: $upstream_sha}}')
+  --arg upstream_sha "${CIRCLECI_UPSTREAM_SHA:-}" \
+  '{branch: $branch, parameters: ({"run-excel-round-trip": true, triggered_by: $triggered_by} + (if $upstream_sha == "" then {} else {upstream_sha: $upstream_sha} end))}')
 
 if ! response=$(curl --fail --silent --show-error --max-time 30 \
   -X POST \

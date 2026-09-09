@@ -16,8 +16,9 @@ on:
         required: true
         type: string
       upstream_sha:
-        description: Upstream commit SHA written to CircleCI pipeline parameters
-        required: true
+        description: Optional upstream commit SHA written to CircleCI pipeline parameters
+        required: false
+        default: ""
         type: string
       timeout_seconds:
         description: Maximum time to wait for the round-trip workflow
@@ -55,7 +56,7 @@ jobs:
       contents: read
     steps:
       - name: Trigger and await CircleCI round-trip
-        uses: ParamountDataManagement/.github/.github/actions/circleci-round-trip@main
+        uses: ./.github/actions/circleci-round-trip
         with:
           project: ${{ inputs.project }}
           branch: ${{ inputs.branch }}

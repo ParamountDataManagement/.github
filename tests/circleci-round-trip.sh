@@ -130,22 +130,30 @@ run_action
 [[ $(<"$case_dir/status") == 3 ]] || fail "absent workflow exited $(<"$case_dir/status")"
 assert_contains "$(<"$case_dir/output")" "round-trip did not run"
 
-# The attribution field is required. This catches callers that accidentally
-# omit the upstream SHA and would create an untraceable CircleCI run.
+# A scheduled caller may omit the upstream SHA. The payload remains valid and
+# does not include a misleading empty attribution value.
 new_case
-printf '%s\n' '{"id":"should-not-exist"}' >"$CURL_POST_RESPONSE"
+printf '%s\n' '{"id":"pipeline-nightly"}' >"$CURL_POST_RESPONSE"
+printf '%s\n' '{"items":[{"name":"excel-round-trip","status":"success"}]}' >"$CURL_POLL_DIR/poll-1.json"
 set +e
-missing_output=$(
+missing_sha_output=$(
   CIRCLECI_API_TOKEN=stub-token \
     CIRCLECI_PROJECT=project \
-    CIRCLECI_BRANCH=main \
-    CIRCLECI_TRIGGERED_BY=test \
+    CIRCLECI_BRANCH=development \
+    CIRCLECI_TRIGGERED_BY=scheduled-nightly \
+    CIRCLECI_TIMEOUT_SECONDS=5 \
+    CIRCLECI_POLL_SECONDS=0 \
+    CIRCLECI_EMPTY_GRACE_SECONDS=0 \
+    CIRCLECI_MAX_TRANSIENT_FAILURES=2 \
     PATH="$PATH" \
     "$action_script" 2>&1
 )
-missing_status=$?
+missing_sha_status=$?
 set -e
-[[ $missing_status -ne 0 ]] || fail "missing upstream SHA unexpectedly passed"
-assert_contains "$missing_output" "CIRCLECI_UPSTREAM_SHA must be provided"
+[[ $missing_sha_status == 0 ]] || fail "scheduled caller without upstream SHA exited $missing_sha_status: $missing_sha_output"
+request=$(head -1 "$CURL_ARGS")
+if [[ "$request" == *'"upstream_sha"'* ]]; then
+  fail "scheduled caller sent an empty upstream_sha attribution"
+fi
 
 echo "PASS: CircleCI round-trip action tests"
