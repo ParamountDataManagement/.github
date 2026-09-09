@@ -24,6 +24,10 @@ jobs:
 
       - name: Install shellcheck
         run: |
+          # The hosted runner image may carry a stale Chrome apt index; it is
+          # unrelated to this workflow and can make apt-get update fail before
+          # shellcheck is installed.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
           sudo apt-get update
           sudo apt-get install -y shellcheck
 
