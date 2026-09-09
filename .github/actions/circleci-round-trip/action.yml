@@ -1,0 +1,49 @@
+name: CircleCI round-trip
+
+description: Trigger the CircleCI Excel round-trip and wait for its result.
+
+inputs:
+  project:
+    description: CircleCI project slug, for example gh/ParamountDataManagement/import-pipeline-tests
+    required: true
+  branch:
+    description: Branch whose CircleCI configuration should run
+    required: true
+  triggered-by:
+    description: Trigger provenance written to CircleCI pipeline parameters
+    required: true
+  upstream-sha:
+    description: Upstream commit SHA written to CircleCI pipeline parameters
+    required: true
+  timeout-seconds:
+    description: Maximum time to wait for the round-trip workflow
+    required: false
+    default: "900"
+  poll-seconds:
+    description: Delay between CircleCI workflow polls
+    required: false
+    default: "15"
+  empty-grace-seconds:
+    description: Time to wait for CircleCI to create its first workflow
+    required: false
+    default: "120"
+  max-transient-failures:
+    description: Consecutive CircleCI API failures tolerated while polling
+    required: false
+    default: "3"
+
+runs:
+  using: composite
+  steps:
+    - name: Trigger and await CircleCI round-trip
+      shell: bash
+      env:
+        CIRCLECI_PROJECT: ${{ inputs.project }}
+        CIRCLECI_BRANCH: ${{ inputs.branch }}
+        CIRCLECI_TRIGGERED_BY: ${{ inputs['triggered-by'] }}
+        CIRCLECI_UPSTREAM_SHA: ${{ inputs['upstream-sha'] }}
+        CIRCLECI_TIMEOUT_SECONDS: ${{ inputs['timeout-seconds'] }}
+        CIRCLECI_POLL_SECONDS: ${{ inputs['poll-seconds'] }}
+        CIRCLECI_EMPTY_GRACE_SECONDS: ${{ inputs['empty-grace-seconds'] }}
+        CIRCLECI_MAX_TRANSIENT_FAILURES: ${{ inputs['max-transient-failures'] }}
+      run: ${{ github.action_path }}/round_trip.sh

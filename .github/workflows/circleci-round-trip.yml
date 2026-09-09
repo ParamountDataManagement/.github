@@ -1,0 +1,69 @@
+name: CircleCI Excel round-trip
+
+on:
+  workflow_call:
+    inputs:
+      project:
+        description: CircleCI project slug
+        required: true
+        type: string
+      branch:
+        description: Branch whose CircleCI configuration should run
+        required: true
+        type: string
+      triggered_by:
+        description: Trigger provenance written to CircleCI pipeline parameters
+        required: true
+        type: string
+      upstream_sha:
+        description: Upstream commit SHA written to CircleCI pipeline parameters
+        required: true
+        type: string
+      timeout_seconds:
+        description: Maximum time to wait for the round-trip workflow
+        required: false
+        default: "900"
+        type: string
+      poll_seconds:
+        description: Delay between CircleCI workflow polls
+        required: false
+        default: "15"
+        type: string
+      empty_grace_seconds:
+        description: Time to wait for CircleCI to create its first workflow
+        required: false
+        default: "120"
+        type: string
+      max_transient_failures:
+        description: Consecutive CircleCI API failures tolerated while polling
+        required: false
+        default: "3"
+        type: string
+    secrets:
+      CIRCLECI_API_TOKEN:
+        description: Organization-managed CircleCI API token
+        required: true
+
+jobs:
+  round-trip:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      # The action is stored in this private organization repository. The
+      # runner needs read access to download it when this workflow is called
+      # from another repository.
+      contents: read
+    steps:
+      - name: Trigger and await CircleCI round-trip
+        uses: ParamountDataManagement/.github/.github/actions/circleci-round-trip@main
+        with:
+          project: ${{ inputs.project }}
+          branch: ${{ inputs.branch }}
+          triggered-by: ${{ inputs.triggered_by }}
+          upstream-sha: ${{ inputs.upstream_sha }}
+          timeout-seconds: ${{ inputs.timeout_seconds }}
+          poll-seconds: ${{ inputs.poll_seconds }}
+          empty-grace-seconds: ${{ inputs.empty_grace_seconds }}
+          max-transient-failures: ${{ inputs.max_transient_failures }}
+        env:
+          CIRCLECI_API_TOKEN: ${{ secrets.CIRCLECI_API_TOKEN }}
