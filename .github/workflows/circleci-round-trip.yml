@@ -49,7 +49,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
-      # The action is stored in this private organization repository. The
+      # The action is stored in this organization repository. The
       # runner needs read access to download it when this workflow is called
       # from another repository.
       contents: read
