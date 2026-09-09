@@ -16,8 +16,9 @@ post-merge commit that contains the action files. For this release:
 3. Callers must be updated to the follow-up workflow commit that contains this
    internal pin before they merge.
 4. Future releases repeat the process: merge the workflow change, then pin the
-   internal action to the previous release commit and update callers to the new
-   workflow commit. A protected release tag may replace these SHA pins later.
+   internal action to the commit produced by that merge and update callers to
+   the new workflow commit. A protected release tag may replace these SHA pins
+   later.
 
 The reusable workflow caps `timeout_seconds` at 1140 seconds. Its GitHub job
 has a 20-minute timeout, leaving 60 seconds for runner setup and teardown.

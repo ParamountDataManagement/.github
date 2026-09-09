@@ -28,6 +28,15 @@ grep -Fq "CIRCLECI_API_TOKEN: \${{ secrets.CIRCLECI_API_TOKEN }}" "$workflow_fil
 action_ref=$(sed -nE 's/^        uses: ParamountDataManagement\/\.github\/\.github\/actions\/circleci-round-trip@(.+)$/\1/p' "$workflow_file")
 [[ "$action_ref" =~ ^[0-9a-f]{40}$ ]] \
   || fail "central workflow must use an immutable reachable commit SHA: $action_ref"
+if ! git -C "$root_dir" cat-file -e "$action_ref^{commit}" 2>/dev/null; then
+  fail "central workflow action pin is not a reachable commit: $action_ref"
+fi
+for action_file in .github/actions/circleci-round-trip/action.yml .github/actions/circleci-round-trip/round_trip.sh; do
+  git -C "$root_dir" cat-file -e "$action_ref:$action_file" 2>/dev/null \
+    || fail "pinned commit $action_ref does not contain $action_file"
+  git -C "$root_dir" show "$action_ref:$action_file" | diff -u - "$root_dir/$action_file" \
+    || fail "working tree $action_file differs from pinned commit $action_ref"
+done
 grep -Fq "post-merge commit on" "$root_dir/.github/CIRCLECI-ROUND-TRIP-RELEASE.md" \
   || fail "release contract does not require callers to use the post-merge main commit"
 
