@@ -56,7 +56,7 @@ jobs:
       contents: read
     steps:
       - name: Trigger and await CircleCI round-trip
-        uses: ./.github/actions/circleci-round-trip
+        uses: ParamountDataManagement/.github/.github/actions/circleci-round-trip@main
         with:
           project: ${{ inputs.project }}
           branch: ${{ inputs.branch }}
