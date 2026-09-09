@@ -25,6 +25,9 @@ for input in triggered-by upstream-sha timeout-seconds poll-seconds empty-grace-
 done
 grep -Fq "CIRCLECI_API_TOKEN: \${{ secrets.CIRCLECI_API_TOKEN }}" "$workflow_file" \
   || fail "workflow does not use the canonical CIRCLECI_API_TOKEN secret"
+action_ref=$(sed -nE 's/^        uses: ParamountDataManagement\/\.github\/\.github\/actions\/circleci-round-trip@(.+)$/\1/p' "$workflow_file")
+[[ "$action_ref" =~ ^[0-9a-f]{40}$ ]] \
+  || fail "workflow action reference is not an immutable commit SHA: $action_ref"
 
 make_curl_stub() {
   local dir=$1
@@ -58,7 +61,13 @@ response="$CURL_POLL_DIR/poll-${count}.json"
 if [[ ! -f "$response" ]]; then
   response="$CURL_POLL_DIR/poll-last.json"
 fi
-cat "$response"
+if [[ -f "$response" ]]; then
+  cat "$response"
+fi
+status_file="$CURL_POLL_DIR/poll-${count}.status"
+if [[ -f "$status_file" ]]; then
+  exit "$(<"$status_file")"
+fi
 exit "${CURL_POLL_STATUS:-0}"
 STUB
   chmod +x "$dir/curl"
@@ -111,6 +120,30 @@ assert_contains "$request" '"run-excel-round-trip":true'
 assert_contains "$request" '"triggered_by":"pdmgolambda"'
 assert_contains "$request" '"upstream_sha":"deadbeef"'
 assert_contains "$(tail -1 "$CURL_ARGS")" "/pipeline/pipeline-123/workflow"
+
+# An unreadable workflow response is transient. The action must retry it and
+# still report the target workflow result once CircleCI returns valid JSON.
+new_case
+printf '%s\n' '{"id":"pipeline-unreadable"}' >"$CURL_POST_RESPONSE"
+printf '%s\n' 'not-json' >"$CURL_POLL_DIR/poll-1.json"
+printf '%s\n' '{"items":[{"name":"excel-round-trip","status":"success"}]}' >"$CURL_POLL_DIR/poll-2.json"
+run_action
+[[ $(<"$case_dir/status") == 0 ]] || fail "unreadable response case exited $(<"$case_dir/status")"
+assert_contains "$(<"$case_dir/output")" "CircleCI returned invalid JSON"
+assert_contains "$(<"$case_dir/output")" "excel-round-trip: success"
+[[ $(<"$CURL_POLL_DIR/count") == 2 ]] || fail "unreadable response was not retried"
+
+# Consecutive curl failures must reach the explicit unverified failure path,
+# rather than being mistaken for a failed CircleCI workflow.
+new_case
+printf '%s\n' '{"id":"pipeline-transient-failures"}' >"$CURL_POST_RESPONSE"
+printf '%s\n' '1' >"$CURL_POLL_DIR/poll-1.status"
+printf '%s\n' '1' >"$CURL_POLL_DIR/poll-2.status"
+run_action
+[[ $(<"$case_dir/status") == 5 ]] || fail "consecutive curl failures exited $(<"$case_dir/status")"
+assert_contains "$(<"$case_dir/output")" "CircleCI round-trip unverified"
+assert_contains "$(<"$case_dir/output")" "Too many consecutive CircleCI API failures"
+[[ $(<"$CURL_POLL_DIR/count") == 2 ]] || fail "consecutive curl failures did not reach the configured limit"
 
 # A failed target workflow must fail the calling job, rather than treating a
 # successful POST as a sufficient result.
