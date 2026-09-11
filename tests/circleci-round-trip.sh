@@ -69,6 +69,17 @@ grep -Eq '^  format:' "$action_yaml" \
 grep -Eq '^    required: true' <<<"$(sed -n '/^  format:/,/^  [a-z]/p' "$action_yaml")" \
   || fail "the format input must be required: a default would silently pick a round-trip"
 
+# The same contract one level up. Callers reach the action through the reusable
+# workflow, so a `default:` there would let a caller omit `format` and silently
+# get someone else's round-trip -- and the action.yml check above cannot see it.
+workflow_format_block=$(sed -n '/^      format:/,/^      [a-z_]*:/p' "$workflow_file")
+[[ -n "$workflow_format_block" ]] || fail "the reusable workflow declares no format input"
+grep -Eq '^        required: true' <<<"$workflow_format_block" \
+  || fail "the reusable workflow's format input must be required: true"
+if grep -Eq '^        default:' <<<"$workflow_format_block"; then
+  fail "the reusable workflow's format input must have no default: one would pick a round-trip for a caller that did not say"
+fi
+
 make_curl_stub() {
   local dir=$1
   cat >"$dir/curl" <<'STUB'
