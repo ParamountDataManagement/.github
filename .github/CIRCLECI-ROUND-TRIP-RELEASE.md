@@ -15,6 +15,11 @@ post-merge commit that contains the action files. For this release:
 2. Its internal action is pinned to that immutable commit.
 3. Callers must be updated to the follow-up workflow commit that contains this
    internal pin before they merge.
+
+The `format` release (PR #8) repeated it: the action changed and merged as
+`b2bb89190a2f2ab2bbb9460335b04a2bbfe28376`, this commit pins the workflow's
+internal action to it and adds the matching `format` input, and callers pin the
+commit this one merges as.
 4. Future releases repeat the process: merge the workflow change, then pin the
    internal action to the commit produced by that merge and update callers to
    the new workflow commit. A protected release tag may replace these SHA pins

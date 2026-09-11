@@ -20,7 +20,7 @@ assert_contains() {
 
 # Composite-action input ids are hyphenated. A snake_case key here silently
 # leaves the action input empty/defaulted even though actionlint accepts it.
-for input in triggered-by upstream-sha timeout-seconds poll-seconds empty-grace-seconds max-transient-failures; do
+for input in format triggered-by upstream-sha timeout-seconds poll-seconds empty-grace-seconds max-transient-failures; do
   grep -Fq "          ${input}:" "$workflow_file" || fail "workflow does not pass action input ${input}"
 done
 grep -Fq "CIRCLECI_API_TOKEN: \${{ secrets.CIRCLECI_API_TOKEN }}" "$workflow_file" \
