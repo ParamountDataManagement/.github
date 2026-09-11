@@ -45,6 +45,30 @@ done
 grep -Fq "post-merge commit on" "$root_dir/.github/CIRCLECI-ROUND-TRIP-RELEASE.md" \
   || fail "release contract does not require callers to use the post-merge main commit"
 
+# The composite action is the only path a real caller takes, and every case
+# below invokes round_trip.sh directly with env vars -- so deleting an `env:`
+# mapping in action.yml would leave all of them green while the action silently
+# stopped forwarding that input. Bind the two together: every variable the
+# script REQUIRES must be mapped from an action input, and `format` by name,
+# because it is the one that selects which round-trip runs.
+action_yaml="$root_dir/.github/actions/circleci-round-trip/action.yml"
+required_vars=$(sed -nE 's/^: "\$\{(CIRCLECI_[A-Z_]+):\?.*$/\1/p' "$action_script")
+[[ -n "$required_vars" ]] || fail "round_trip.sh declares no required CIRCLECI_* variables"
+while read -r required_var; do
+  [[ -n "$required_var" ]] || continue
+  # CIRCLECI_API_TOKEN comes from the reusable workflow's secrets block, not an input.
+  [[ "$required_var" == CIRCLECI_API_TOKEN ]] && continue
+  grep -Eq "^ +${required_var}: \\\$\{\{ inputs" "$action_yaml" \
+    || fail "action.yml does not map ${required_var} from an action input"
+done <<<"$required_vars"
+# shellcheck disable=SC2016  # ${{ }} is GitHub Actions syntax to match literally, not shell expansion
+grep -Fq 'CIRCLECI_ROUND_TRIP_FORMAT: ${{ inputs.format }}' "$action_yaml" \
+  || fail "action.yml does not forward the format input to CIRCLECI_ROUND_TRIP_FORMAT"
+grep -Eq '^  format:' "$action_yaml" \
+  || fail "action.yml declares no format input"
+grep -Eq '^    required: true' <<<"$(sed -n '/^  format:/,/^  [a-z]/p' "$action_yaml")" \
+  || fail "the format input must be required: a default would silently pick a round-trip"
+
 make_curl_stub() {
   local dir=$1
   cat >"$dir/curl" <<'STUB'
