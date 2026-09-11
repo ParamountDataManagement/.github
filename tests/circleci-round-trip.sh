@@ -45,6 +45,30 @@ done
 grep -Fq "post-merge commit on" "$root_dir/.github/CIRCLECI-ROUND-TRIP-RELEASE.md" \
   || fail "release contract does not require callers to use the post-merge main commit"
 
+# The composite action is the only path a real caller takes, and every case
+# below invokes round_trip.sh directly with env vars -- so deleting an `env:`
+# mapping in action.yml would leave all of them green while the action silently
+# stopped forwarding that input. Bind the two together: every variable the
+# script REQUIRES must be mapped from an action input, and `format` by name,
+# because it is the one that selects which round-trip runs.
+action_yaml="$root_dir/.github/actions/circleci-round-trip/action.yml"
+required_vars=$(sed -nE 's/^: "\$\{(CIRCLECI_[A-Z_]+):\?.*$/\1/p' "$action_script")
+[[ -n "$required_vars" ]] || fail "round_trip.sh declares no required CIRCLECI_* variables"
+while read -r required_var; do
+  [[ -n "$required_var" ]] || continue
+  # CIRCLECI_API_TOKEN comes from the reusable workflow's secrets block, not an input.
+  [[ "$required_var" == CIRCLECI_API_TOKEN ]] && continue
+  grep -Eq "^ +${required_var}: \\\$\{\{ inputs" "$action_yaml" \
+    || fail "action.yml does not map ${required_var} from an action input"
+done <<<"$required_vars"
+# shellcheck disable=SC2016  # ${{ }} is GitHub Actions syntax to match literally, not shell expansion
+grep -Fq 'CIRCLECI_ROUND_TRIP_FORMAT: ${{ inputs.format }}' "$action_yaml" \
+  || fail "action.yml does not forward the format input to CIRCLECI_ROUND_TRIP_FORMAT"
+grep -Eq '^  format:' "$action_yaml" \
+  || fail "action.yml declares no format input"
+grep -Eq '^    required: true' <<<"$(sed -n '/^  format:/,/^  [a-z]/p' "$action_yaml")" \
+  || fail "the format input must be required: a default would silently pick a round-trip"
+
 make_curl_stub() {
   local dir=$1
   cat >"$dir/curl" <<'STUB'
@@ -101,7 +125,7 @@ new_case() {
 }
 
 run_action_values() {
-  local timeout=$1 poll=$2 grace=$3 transient_limit=$4
+  local timeout=$1 poll=$2 grace=$3 transient_limit=$4 format=${5:-excel}
   local output status
   set +e
   output=$(
@@ -110,6 +134,7 @@ run_action_values() {
       CIRCLECI_PROJECT=gh/ParamountDataManagement/import-pipeline-tests \
       CIRCLECI_BRANCH=main \
       CIRCLECI_TRIGGERED_BY=pdmgolambda \
+      CIRCLECI_ROUND_TRIP_FORMAT="$format" \
       CIRCLECI_UPSTREAM_SHA=deadbeef \
       CIRCLECI_TIMEOUT_SECONDS="$timeout" \
       CIRCLECI_POLL_SECONDS="$poll" \
@@ -235,11 +260,13 @@ assert_contains "$(<"$case_dir/output")" "No CircleCI workflows were created"
 
 # A dynamic-config response with no workflows gets its configured grace
 # period. The target appears on the next poll instead of being misclassified.
+# The grace is 5s, not 1s: with a 1s grace the case failed whenever the first
+# poll happened to cross a wall-clock second boundary.
 new_case
 printf '%s\n' '{"id":"pipeline-grace"}' >"$CURL_POST_RESPONSE"
 printf '%s\n' '{"items":[]}' >"$CURL_POLL_DIR/poll-1.json"
 printf '%s\n' '{"items":[{"name":"excel-round-trip","status":"success"}]}' >"$CURL_POLL_DIR/poll-2.json"
-run_action_values 5 0 1 2
+run_action_values 5 0 5 2
 [[ $(<"$case_dir/status") == 0 ]] || fail "empty grace case exited $(<"$case_dir/status")"
 assert_contains "$(<"$case_dir/output")" "excel-round-trip: success"
 
@@ -262,6 +289,7 @@ cap_output=$(
     CIRCLECI_PROJECT=project \
     CIRCLECI_BRANCH=main \
     CIRCLECI_TRIGGERED_BY=test \
+    CIRCLECI_ROUND_TRIP_FORMAT=excel \
     CIRCLECI_TIMEOUT_SECONDS=1141 \
     CIRCLECI_MAX_TIMEOUT_SECONDS=1140 \
     CIRCLECI_POLL_SECONDS=0 \
@@ -286,6 +314,7 @@ for numeric_var in timeout poll grace transient; do
       CIRCLECI_PROJECT=project \
       CIRCLECI_BRANCH=main \
       CIRCLECI_TRIGGERED_BY=test \
+      CIRCLECI_ROUND_TRIP_FORMAT=excel \
       CIRCLECI_TIMEOUT_SECONDS=$([[ "$numeric_var" == timeout ]] && printf '1+1' || printf '5') \
       CIRCLECI_POLL_SECONDS=$([[ "$numeric_var" == poll ]] && printf '1+1' || printf '0') \
       CIRCLECI_EMPTY_GRACE_SECONDS=$([[ "$numeric_var" == grace ]] && printf '1+1' || printf '0') \
@@ -310,6 +339,7 @@ missing_sha_output=$(
     CIRCLECI_PROJECT=project \
     CIRCLECI_BRANCH=development \
     CIRCLECI_TRIGGERED_BY=scheduled-nightly \
+    CIRCLECI_ROUND_TRIP_FORMAT=excel \
     CIRCLECI_TIMEOUT_SECONDS=5 \
     CIRCLECI_POLL_SECONDS=0 \
     CIRCLECI_EMPTY_GRACE_SECONDS=0 \
@@ -324,5 +354,52 @@ request=$(head -1 "$CURL_ARGS")
 if [[ "$request" == *'"upstream_sha"'* ]]; then
   fail "scheduled caller sent an empty upstream_sha attribution"
 fi
+
+# The format selects BOTH the pipeline parameter and the awaited workflow, so an
+# aces caller sends only run-aces-round-trip and waits on aces-round-trip.
+new_case
+printf '%s\n' '{"id":"pipeline-aces"}' >"$CURL_POST_RESPONSE"
+printf '%s\n' '{"items":[{"name":"aces-round-trip","status":"success"}]}' >"$CURL_POLL_DIR/poll-1.json"
+run_action_values 5 0 0 2 aces
+[[ $(<"$case_dir/status") == 0 ]] || fail "aces case exited $(<"$case_dir/status")"
+assert_contains "$(<"$case_dir/output")" "aces-round-trip: success"
+request=$(head -1 "$CURL_ARGS")
+assert_contains "$request" '"run-aces-round-trip":true'
+if [[ "$request" == *'run-excel-round-trip'* ]]; then
+  fail "aces caller also selected the excel round-trip"
+fi
+
+# An aces request whose pipeline only ran excel-round-trip is a mis-selection:
+# another format's success must never satisfy it.
+new_case
+printf '%s\n' '{"id":"pipeline-aces-misselected"}' >"$CURL_POST_RESPONSE"
+printf '%s\n' '{"items":[{"name":"excel-round-trip","status":"success"}]}' >"$CURL_POLL_DIR/poll-1.json"
+run_action_values 5 0 0 2 aces
+[[ $(<"$case_dir/status") == 3 ]] || fail "aces mis-selection exited $(<"$case_dir/status")"
+assert_contains "$(<"$case_dir/output")" "aces-round-trip was not visible"
+
+# The format is required and shape-checked before CircleCI is contacted.
+for bad_format in "" "Excel" "excel;true" "../aces"; do
+  new_case
+  printf '%s\n' '{"id":"pipeline-bad-format"}' >"$CURL_POST_RESPONSE"
+  set +e
+  format_output=$(
+    CIRCLECI_API_TOKEN=stub-token \
+      CIRCLECI_PROJECT=project \
+      CIRCLECI_BRANCH=main \
+      CIRCLECI_TRIGGERED_BY=test \
+      CIRCLECI_ROUND_TRIP_FORMAT="$bad_format" \
+      CIRCLECI_TIMEOUT_SECONDS=5 \
+      CIRCLECI_POLL_SECONDS=0 \
+      CIRCLECI_EMPTY_GRACE_SECONDS=0 \
+      CIRCLECI_MAX_TRANSIENT_FAILURES=2 \
+      "$action_script" 2>&1
+  )
+  format_status=$?
+  set -e
+  [[ "$format_status" != 0 ]] || fail "format '$bad_format' was accepted"
+  assert_contains "$format_output" "CIRCLECI_ROUND_TRIP_FORMAT"
+  [[ ! -s "$CURL_ARGS" ]] || fail "format '$bad_format' reached curl"
+done
 
 echo "PASS: CircleCI round-trip action tests"

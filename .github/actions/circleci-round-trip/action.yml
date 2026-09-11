@@ -1,6 +1,6 @@
 name: CircleCI round-trip
 
-description: Trigger the CircleCI Excel round-trip and wait for its result.
+description: Trigger one CircleCI round-trip workflow, selected by format, and wait for its result.
 
 inputs:
   project:
@@ -8,6 +8,12 @@ inputs:
     required: true
   branch:
     description: Branch whose CircleCI configuration should run
+    required: true
+  format:
+    description: >-
+      Round-trip format, for example excel, aces or pies. Sends the pipeline
+      parameter run-<format>-round-trip and waits on the workflow
+      <format>-round-trip; the CircleCI project config declares which exist.
     required: true
   triggered-by:
     description: Trigger provenance written to CircleCI pipeline parameters
@@ -41,6 +47,7 @@ runs:
       env:
         CIRCLECI_PROJECT: ${{ inputs.project }}
         CIRCLECI_BRANCH: ${{ inputs.branch }}
+        CIRCLECI_ROUND_TRIP_FORMAT: ${{ inputs.format }}
         CIRCLECI_TRIGGERED_BY: ${{ inputs['triggered-by'] }}
         CIRCLECI_UPSTREAM_SHA: ${{ inputs['upstream-sha'] }}
         CIRCLECI_TIMEOUT_SECONDS: ${{ inputs['timeout-seconds'] }}

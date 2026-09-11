@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
 # Trigger a parameter-selected CircleCI pipeline and wait for its named workflow.
+#
+# CIRCLECI_ROUND_TRIP_FORMAT selects both names, so they cannot drift apart:
+# the pipeline parameter run-<format>-round-trip and the workflow
+# <format>-round-trip. Which formats exist is decided by the CircleCI project's
+# own config, which declares those parameters; CircleCI rejects an undeclared
+# one, so this script checks only that the value is a safe identifier.
 set -euo pipefail
 
 : "${CIRCLECI_API_TOKEN:?CIRCLECI_API_TOKEN must be provided by the caller}"
 : "${CIRCLECI_PROJECT:?CIRCLECI_PROJECT must be provided by the caller}"
 : "${CIRCLECI_BRANCH:?CIRCLECI_BRANCH must be provided by the caller}"
 : "${CIRCLECI_TRIGGERED_BY:?CIRCLECI_TRIGGERED_BY must be provided by the caller}"
+: "${CIRCLECI_ROUND_TRIP_FORMAT:?CIRCLECI_ROUND_TRIP_FORMAT must be provided by the caller}"
 api_base="${CIRCLECI_API_BASE:-https://circleci.com/api/v2}"
 timeout_s="${CIRCLECI_TIMEOUT_SECONDS:-900}"
 poll_s="${CIRCLECI_POLL_SECONDS:-15}"
@@ -54,11 +61,19 @@ if [[ -n "$max_timeout_s" ]]; then
   fi
 fi
 
+if [[ ! $CIRCLECI_ROUND_TRIP_FORMAT =~ ^[a-z][a-z0-9]*$ ]]; then
+  echo "::error title=Invalid CircleCI input::CIRCLECI_ROUND_TRIP_FORMAT must be a lowercase identifier such as excel, aces or pies." >&2
+  exit 2
+fi
+workflow_name="${CIRCLECI_ROUND_TRIP_FORMAT}-round-trip"
+selector="run-${CIRCLECI_ROUND_TRIP_FORMAT}-round-trip"
+
 payload=$(jq -cn \
+  --arg selector "$selector" \
   --arg branch "$CIRCLECI_BRANCH" \
   --arg triggered_by "$CIRCLECI_TRIGGERED_BY" \
   --arg upstream_sha "${CIRCLECI_UPSTREAM_SHA:-}" \
-  '{branch: $branch, parameters: ({"run-excel-round-trip": true, triggered_by: $triggered_by} + (if $upstream_sha == "" then {} else {upstream_sha: $upstream_sha} end))}')
+  '{branch: $branch, parameters: ({($selector): true, triggered_by: $triggered_by} + (if $upstream_sha == "" then {} else {upstream_sha: $upstream_sha} end))}')
 
 if ! response=$(curl --fail --silent --show-error --max-time 30 \
   -X POST \
@@ -150,11 +165,11 @@ while :; do
   transient=0
 
   total=$(jq -er 'length' <<<"$workflow_items")
-  status=$(jq -r '[.[] | select(.name == "excel-round-trip") | .status] | last // empty' <<<"$workflow_items")
+  status=$(jq -r --arg name "$workflow_name" '[.[] | select(.name == $name) | .status] | last // empty' <<<"$workflow_items")
 
   case "$status" in
     success)
-      echo "excel-round-trip: success"
+      echo "${workflow_name}: success"
       exit 0
       ;;
     queued|running|on_hold|failing|"")
@@ -162,27 +177,27 @@ while :; do
       # pending. A dynamic-config setup workflow may also precede the target.
       ;;
     failed|error|canceled|unauthorized|infrastructure_fail|not_run|no_tests)
-      echo "::error title=CircleCI round-trip failed::excel-round-trip ended in '$status'." >&2
+      echo "::error title=CircleCI round-trip failed::${workflow_name} ended in '$status'." >&2
       exit 1
       ;;
     *)
       # Unknown statuses are safer to wait on than to misclassify as failure;
       # the overall timeout remains the final guard.
-      echo "::warning title=CircleCI workflow pending::excel-round-trip is in unrecognized state '$status'; continuing to poll."
+      echo "::warning title=CircleCI workflow pending::${workflow_name} is in unrecognized state '$status'; continuing to poll."
       ;;
   esac
 
   now=$(date +%s)
   elapsed=$((now - started))
   if (( now >= deadline )); then
-    echo "::error title=CircleCI round-trip timed out::excel-round-trip did not finish within ${timeout_s}s." >&2
+    echo "::error title=CircleCI round-trip timed out::${workflow_name} did not finish within ${timeout_s}s." >&2
     exit 4
   fi
   if [[ -z "$status" && $elapsed -ge $empty_grace_s ]]; then
     if (( total == 0 )); then
       echo "::error title=CircleCI round-trip did not run::No CircleCI workflows were created within ${empty_grace_s}s." >&2
     else
-      echo "::error title=CircleCI round-trip did not run::The pipeline ran workflows but excel-round-trip was not visible within ${empty_grace_s}s." >&2
+      echo "::error title=CircleCI round-trip did not run::The pipeline ran workflows but ${workflow_name} was not visible within ${empty_grace_s}s." >&2
     fi
     exit 3
   fi
