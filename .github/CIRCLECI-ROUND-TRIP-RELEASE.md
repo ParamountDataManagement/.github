@@ -23,3 +23,17 @@ post-merge commit that contains the action files. For this release:
 The reusable workflow caps `timeout_seconds` at 1140 seconds. Its GitHub job
 has a 20-minute timeout, leaving 60 seconds for runner setup and teardown.
 Inputs are validated as decimal integers before any shell arithmetic.
+
+## Format selection
+
+The action takes a required `format` (`excel`, `aces`, `pies`, …). It sends the
+pipeline parameter `run-<format>-round-trip` and waits on the workflow
+`<format>-round-trip`, so the two names cannot drift apart. The CircleCI
+project's config is the authority on which formats exist — it declares those
+parameters, and CircleCI rejects an undeclared one — so the action checks only
+that the value is a lowercase identifier.
+
+This is a release like the one above: the action change merges first, then a
+follow-up commit adds the `format` input to the reusable workflow and pins the
+internal action to the merged commit. Callers pin that follow-up commit and pass
+`format` explicitly; it has no default.
