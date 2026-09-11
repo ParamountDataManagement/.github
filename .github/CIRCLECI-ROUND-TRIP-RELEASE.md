@@ -9,16 +9,23 @@ reference.
 The reusable workflow and its internal composite action are pinned
 independently. The workflow is pinned by callers to the post-merge commit that
 contains the contract; the workflow pins the internal action to the prior
-post-merge commit that contains the action files. For this release:
+post-merge commit that contains the action files. Every release repeats the same
+two steps:
 
-1. The workflow file was released at `453f0c3d6871c88428aae5b6d49c92efaf2902ad`.
-2. Its internal action is pinned to that immutable commit.
-3. Callers must be updated to the follow-up workflow commit that contains this
-   internal pin before they merge.
-4. Future releases repeat the process: merge the workflow change, then pin the
-   internal action to the commit produced by that merge and update callers to
-   the new workflow commit. A protected release tag may replace these SHA pins
-   later.
+1. Merge the action change. Its post-merge commit on `main` is the action
+   release reference — a SHA copied from the pull request is not one.
+2. Merge a follow-up commit that pins the workflow's internal action to that
+   reference, together with any workflow-level contract the change adds.
+   Callers are then updated to the post-merge commit of THAT follow-up.
+
+A protected release tag may replace these SHA pins later.
+
+## Releases
+
+| Release | Action commit | Workflow commit callers pin |
+|---|---|---|
+| Initial | `453f0c3d6871c88428aae5b6d49c92efaf2902ad` | the follow-up that pinned it |
+| `format` selection (#8, #9) | `b2bb89190a2f2ab2bbb9460335b04a2bbfe28376` | the commit #9 merges as |
 
 The reusable workflow caps `timeout_seconds` at 1140 seconds. Its GitHub job
 has a 20-minute timeout, leaving 60 seconds for runner setup and teardown.
@@ -33,7 +40,5 @@ project's config is the authority on which formats exist — it declares those
 parameters, and CircleCI rejects an undeclared one — so the action checks only
 that the value is a lowercase identifier.
 
-This is a release like the one above: the action change merges first, then a
-follow-up commit adds the `format` input to the reusable workflow and pins the
-internal action to the merged commit. Callers pin that follow-up commit and pass
-`format` explicitly; it has no default.
+Callers pass `format` explicitly; it has no default, at the action or at the
+workflow. The release itself followed the two steps above — see the table.

@@ -1,4 +1,4 @@
-name: CircleCI Excel round-trip
+name: CircleCI round-trip
 
 on:
   workflow_call:
@@ -9,6 +9,14 @@ on:
         type: string
       branch:
         description: Branch whose CircleCI configuration should run
+        required: true
+        type: string
+      format:
+        description: >-
+          Round-trip format, for example excel, aces or pies. Sends the pipeline
+          parameter run-<format>-round-trip and waits on the workflow
+          <format>-round-trip; the CircleCI project config declares which exist.
+          No default: a caller says which round-trip it means.
         required: true
         type: string
       triggered_by:
@@ -60,10 +68,11 @@ jobs:
       - name: Trigger and await CircleCI round-trip
         # Pin the internal action to the post-merge release commit. Callers pin
         # this reusable workflow to the follow-up commit that contains this ref.
-        uses: ParamountDataManagement/.github/.github/actions/circleci-round-trip@453f0c3d6871c88428aae5b6d49c92efaf2902ad
+        uses: ParamountDataManagement/.github/.github/actions/circleci-round-trip@b2bb89190a2f2ab2bbb9460335b04a2bbfe28376
         with:
           project: ${{ inputs.project }}
           branch: ${{ inputs.branch }}
+          format: ${{ inputs.format }}
           triggered-by: ${{ inputs.triggered_by }}
           upstream-sha: ${{ inputs.upstream_sha }}
           timeout-seconds: ${{ inputs.timeout_seconds }}

@@ -20,9 +20,15 @@ assert_contains() {
 
 # Composite-action input ids are hyphenated. A snake_case key here silently
 # leaves the action input empty/defaulted even though actionlint accepts it.
-for input in triggered-by upstream-sha timeout-seconds poll-seconds empty-grace-seconds max-transient-failures; do
+for input in format triggered-by upstream-sha timeout-seconds poll-seconds empty-grace-seconds max-transient-failures; do
   grep -Fq "          ${input}:" "$workflow_file" || fail "workflow does not pass action input ${input}"
 done
+# The loop above only proves the KEY exists under `with:`. Hard-coding
+# `format: excel` there satisfies it while every caller silently gets an Excel
+# round-trip whatever it asked for -- the one hop no other assertion covers.
+# shellcheck disable=SC2016  # ${{ }} is GitHub Actions syntax to match literally
+grep -Fq 'format: ${{ inputs.format }}' "$workflow_file" \
+  || fail "workflow does not forward its format input to the action"
 grep -Fq "CIRCLECI_API_TOKEN: \${{ secrets.CIRCLECI_API_TOKEN }}" "$workflow_file" \
   || fail "workflow does not use the canonical CIRCLECI_API_TOKEN secret"
 action_ref=$(sed -nE 's/^        uses: ParamountDataManagement\/\.github\/\.github\/actions\/circleci-round-trip@(.+)$/\1/p' "$workflow_file")
@@ -42,6 +48,16 @@ for action_file in .github/actions/circleci-round-trip/action.yml .github/action
       || fail "working tree $action_file differs from pinned commit $action_ref"
   fi
 done
+# Reachable and containing the files is not enough: the PREVIOUS release is both,
+# and pinning it would leave every caller's `format` input unread by an action
+# that does not declare it. Bind the pin to the capability the workflow requires.
+git -C "$root_dir" show "$action_ref:.github/actions/circleci-round-trip/action.yml" \
+  | grep -Eq '^  format:' \
+  || fail "the pinned action release does not declare the format input: $action_ref"
+git -C "$root_dir" show "$action_ref:.github/actions/circleci-round-trip/round_trip.sh" \
+  | grep -Fq 'CIRCLECI_ROUND_TRIP_FORMAT' \
+  || fail "the pinned action release does not read CIRCLECI_ROUND_TRIP_FORMAT: $action_ref"
+
 grep -Fq "post-merge commit on" "$root_dir/.github/CIRCLECI-ROUND-TRIP-RELEASE.md" \
   || fail "release contract does not require callers to use the post-merge main commit"
 
@@ -68,6 +84,27 @@ grep -Eq '^  format:' "$action_yaml" \
   || fail "action.yml declares no format input"
 grep -Eq '^    required: true' <<<"$(sed -n '/^  format:/,/^  [a-z]/p' "$action_yaml")" \
   || fail "the format input must be required: a default would silently pick a round-trip"
+
+# The same contract one level up. Callers reach the action through the reusable
+# workflow, so a `default:` there would let a caller omit `format` and silently
+# get someone else's round-trip -- and the action.yml check above cannot see it.
+# awk, not a sed range: the range's end address only matched another 6-space key,
+# so if `format` ever became the LAST input the block ran to EOF and swallowed
+# the secrets section -- whose CIRCLECI_API_TOKEN carries `required: true` at the
+# same indent, satisfying the assertion below by accident. This stops at the
+# first line indented six spaces or less, which `    secrets:` and `  round-trip:`
+# both are.
+workflow_format_block=$(awk '
+  /^      format:/ { inblock = 1; print; next }
+  inblock && /^ {0,6}[^ ]/ { exit }
+  inblock { print }
+' "$workflow_file")
+[[ -n "$workflow_format_block" ]] || fail "the reusable workflow declares no format input"
+grep -Eq '^        required: true' <<<"$workflow_format_block" \
+  || fail "the reusable workflow's format input must be required: true"
+if grep -Eq '^        default:' <<<"$workflow_format_block"; then
+  fail "the reusable workflow's format input must have no default: one would pick a round-trip for a caller that did not say"
+fi
 
 make_curl_stub() {
   local dir=$1
