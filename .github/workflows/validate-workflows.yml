@@ -41,3 +41,10 @@ jobs:
         run: |
           shellcheck .github/actions/circleci-round-trip/round_trip.sh tests/circleci-round-trip.sh
           ./tests/circleci-round-trip.sh
+
+      # The org default PR template is read by pdm-ci-tools' regression-evidence
+      # check and quoted by REGRESSION_TESTING_POLICY.md; pin the lines they share.
+      - name: Validate the pull request template
+        run: |
+          shellcheck tests/pull-request-template.sh
+          ./tests/pull-request-template.sh
