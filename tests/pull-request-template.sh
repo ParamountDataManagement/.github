@@ -42,4 +42,19 @@ grep -Fq 'https://github.com/ParamountDataManagement/pdm-claude-standards/blob/m
 # The check's name, so an author reading a red check finds the block that feeds it.
 grep -Fq 'regression-evidence' "$template" || fail "the template must name the regression-evidence check"
 
+# Exactly ONE `Reason:` line: the check takes the first ticked exception line it
+# finds, so a second Reason line anywhere in the template would be an author's
+# ticked box that the check never reads.
+reason_lines=$(grep -c 'Reason:' "$template" || true)
+[[ "$reason_lines" == "1" ]] || fail "expected exactly one 'Reason:' line, found $reason_lines"
+
+# The three options sit together under the heading the policy names, as one
+# list — the "tick exactly one" instruction is about THIS list.
+block=$(awk '/^## Regression coverage/{f=1;next} /^## /{f=0} f' "$template")
+[[ -n "$block" ]] || fail "missing the '## Regression coverage' section"
+for line in '- [ ] **Regression test added**' '- [ ] **Regression exception**' '- [ ] Not a bug fix'; do
+  grep -Fq -- "$line" <<<"$block" || fail "'$line' must be inside the Regression coverage section"
+done
+grep -Fq 'Tick exactly one' <<<"$block" || fail "the Regression coverage section must say 'Tick exactly one'"
+
 echo "pull_request_template.md: contract lines present, nothing pre-ticked"
