@@ -24,8 +24,10 @@ fail() {
 # comment (stripped by the check, so an untouched template is not a reason).
 grep -Fq -- '- [ ] **Regression exception** — no practical automated test surface. Reason: <!--' "$template" \
   || fail "the exception line must read '- [ ] **Regression exception** — no practical automated test surface. Reason: <!-- … -->'"
-grep -Fq -- '- [ ] **Regression test added**' "$template" \
-  || fail "the evidence checkbox must be '- [ ] **Regression test added**'"
+# The FULL evidence line, marker list included: REGRESSION_TESTING_POLICY.md quotes it
+# verbatim and guards its copy, so a wording change here must be made in both places.
+grep -Fq -- "- [ ] **Regression test added** — linked bug ticket, and a test that fails without the fix, tagged per the repo convention (RSpec \`regression: 'CU-…'\` · Vitest \`tags: ['regression']\` · Playwright \`@regression\` + annotation · Go \`TestRegression…\` · pytest \`@pytest.mark.regression\`)" "$template" \
+  || fail "the evidence line must read exactly as REGRESSION_TESTING_POLICY.md § Evidence quotes it (label, clauses and marker list)"
 grep -Fq -- '- [ ] Not a bug fix' "$template" \
   || fail "the third option must be '- [ ] Not a bug fix'"
 
