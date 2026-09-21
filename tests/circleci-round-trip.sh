@@ -684,6 +684,7 @@ grep -Fq 'FAILURE_CODE: ${{ steps.round-trip.outputs.failure-code }}' "$workflow
 # It re-raises THAT code, and defaults to 1 rather than to nothing -- an empty
 # expansion would make `exit` return the previous command's status, which here
 # is the successful echo, and the job would go green on a red round-trip.
+# shellcheck disable=SC2016  # a shell expansion to match literally, not expand
 grep -Fq 'exit "${FAILURE_CODE:-1}"' "$workflow_file" \
   || fail "the re-raise does not exit with the failure code, defaulted to 1"
 # The job-number branching belongs to round_trip.sh, where the cases above run
