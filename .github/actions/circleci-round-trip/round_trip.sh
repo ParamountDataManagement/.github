@@ -20,6 +20,112 @@ empty_grace_s="${CIRCLECI_EMPTY_GRACE_SECONDS:-120}"
 max_transient="${CIRCLECI_MAX_TRANSIENT_FAILURES:-3}"
 max_timeout_s="${CIRCLECI_MAX_TIMEOUT_SECONDS:-}"
 
+# --- identity outputs -------------------------------------------------------
+#
+# Waiting for the round-trip was never the whole job. A caller that wants the
+# JUnit, the diffs or the triage report has to ask CircleCI for them, and the
+# CircleCI artifacts API is keyed on a JOB NUMBER. Nothing here said which job
+# ran, so import-pipeline-tests' Lee Rocky hand-off could not fetch the results
+# and filed no ticket on a red round-trip night — it had no failing test to
+# name, and dispatch_leerocky.py refuses to open a bug it cannot substantiate.
+#
+# Emitted from an EXIT trap rather than at the end of the happy path, because
+# the run whose job number is wanted is the RED one.
+#
+# Installed HERE, before input validation, rather than beside the names it
+# reports. Every exit path must report its code — an exit 2 that emitted
+# nothing would reach the reusable workflow's re-raise as a bare 1, and the
+# distinction between `CircleCI rejected it` and `the caller passed nonsense`
+# is exactly what that code carries.
+pipeline_id=""
+selected_workflow_id=""
+workflow_name=""
+
+emit_output() {
+  [[ -n "${GITHUB_OUTPUT:-}" ]] || return 0
+  printf '%s=%s\n' "$1" "$2" >>"$GITHUB_OUTPUT"
+}
+
+# The round-trip workflow holds exactly one job, named after the workflow. Ask
+# by name and take the LAST match, not the first: a rerun leaves the superseded
+# job in the same list under the same name, and its artifacts are not the ones
+# this round-trip produced. The workflow selection further down takes `last` for
+# exactly the same reason.
+#
+# Fall back to the sole job when there is exactly one, so a caller whose
+# CircleCI config names its job differently still gets a number. Several jobs
+# and no name match answers empty rather than guessing: an empty number is a
+# consumer that skips the download and says so, a wrong one is a consumer that
+# reports some other job's results as this round-trip's.
+#
+# A lookup that FAILED is not the same answer as a lookup that found nothing to
+# report. Both end in an empty job number — the round-trip's verdict must never
+# turn on this call — but a failure says so on stderr first, with CircleCI's own
+# words, so the run log distinguishes `could not ask` from `nothing to say`.
+lookup_job_number() {
+  local workflow_id=$1 body number
+  [[ -n "$workflow_id" ]] || return 0
+  if ! body=$(curl --fail --silent --show-error --max-time 30 \
+    -H "Circle-Token: ${CIRCLECI_API_TOKEN}" \
+    "$api_base/workflow/$workflow_id/job" 2>&1); then
+    echo "::warning title=CircleCI job lookup failed::Could not list the jobs of workflow ${workflow_id}: ${body}" >&2
+    return 0
+  fi
+  if ! number=$(printf '%s' "$body" | jq -r --arg name "$workflow_name" '
+    (.items // []) as $items
+    | [$items[] | select(.name == $name) | .job_number | select(. != null)] as $named
+    | ( if ($named | length) > 0 then ($named | last)
+        elif ($items | length) == 1 then $items[0].job_number
+        else null end )
+    | if . == null then "" else tostring end
+  ' 2>&1); then
+    echo "::warning title=CircleCI job lookup unreadable::Could not read the job list of workflow ${workflow_id}: ${number}" >&2
+    return 0
+  fi
+  printf '%s' "$number"
+}
+
+# Said HERE rather than in the reusable workflow's YAML, so that the existing
+# test harness can assert on each branch — nothing in this repo runs a workflow
+# `run:` block. A caller reading `job-number: ''` in its own log should not have
+# to guess whether the action failed to report or there was nothing to report.
+# Say which, once, where the reader already is.
+report_job_location() {
+  local job_number=$1 workflow_id=$2
+  if [[ -n "$job_number" ]]; then
+    echo "CircleCI job number: ${job_number} (workflow ${workflow_id})"
+  elif [[ -n "$workflow_id" ]]; then
+    echo "::warning title=No CircleCI job number::Workflow ${workflow_id} ran but its job could not be identified; callers will not be able to fetch its artifacts."
+  else
+    echo "::warning title=No CircleCI job number::No CircleCI workflow was identified, so there are no artifacts to fetch."
+  fi
+}
+
+on_exit() {
+  local code=$?
+  local job_number
+  job_number=$(lookup_job_number "$selected_workflow_id")
+  emit_output exit-code "$code"
+  # `failure-code` is written ONLY on a failure, and that is the whole point of
+  # it. The reusable workflow re-raises with `exit "${FAILURE_CODE:-1}"` and no
+  # sanitizing branch of its own, because a branch in a workflow `run:` block is
+  # logic no test in this repo can reach. Writing the output conditionally moves
+  # that decision here, where the tests do reach it: this output can never be
+  # `0` and can never be a non-number, and an output that was lost or never
+  # written arrives as an empty string, which defaults to 1.
+  if (( code != 0 )); then
+    emit_output failure-code "$code"
+  fi
+  emit_output pipeline-id "$pipeline_id"
+  emit_output workflow-id "$selected_workflow_id"
+  emit_output job-number "$job_number"
+  report_job_location "$job_number" "$selected_workflow_id"
+  # The trap must never change the script's verdict.
+  return "$code"
+}
+trap on_exit EXIT
+# ----------------------------------------------------------------------------
+
 # Bash arithmetic treats untrusted strings as expressions. Validate and
 # normalize every numeric input before using it in arithmetic or sleep.
 parse_uint() {
@@ -165,7 +271,11 @@ while :; do
   transient=0
 
   total=$(jq -er 'length' <<<"$workflow_items")
-  status=$(jq -r --arg name "$workflow_name" '[.[] | select(.name == $name) | .status] | last // empty' <<<"$workflow_items")
+  # One jq pass for both, so the id can never belong to a different workflow
+  # than the status that decided this iteration.
+  selected=$(jq -c --arg name "$workflow_name" '[.[] | select(.name == $name)] | last // {}' <<<"$workflow_items")
+  status=$(jq -r '.status // empty' <<<"$selected")
+  selected_workflow_id=$(jq -r '.id // empty' <<<"$selected")
 
   case "$status" in
     success)

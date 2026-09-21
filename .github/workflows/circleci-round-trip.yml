@@ -48,6 +48,25 @@ on:
         required: false
         default: "3"
         type: string
+    outputs:
+      job-number:
+        description: >-
+          CircleCI job number of the round-trip job. A caller fetches this run's
+          artifacts with it — GET /project/{slug}/{job-number}/artifacts — which
+          is how import-pipeline-tests' Lee Rocky hand-off reaches the JUnit and
+          can name a failing test on a red night.
+
+          EMPTY IS A REAL ANSWER and means "no job to fetch from": the workflow
+          never became visible, or its job could not be identified without
+          guessing. A caller must branch on empty rather than paste it into a
+          URL.
+        value: ${{ jobs.round-trip.outputs.job-number }}
+      workflow-id:
+        description: CircleCI workflow id that was waited on; empty if none appeared.
+        value: ${{ jobs.round-trip.outputs.workflow-id }}
+      pipeline-id:
+        description: CircleCI pipeline id created by this run.
+        value: ${{ jobs.round-trip.outputs.pipeline-id }}
     secrets:
       CIRCLECI_API_TOKEN:
         description: Organization-managed CircleCI API token
@@ -56,6 +75,12 @@ on:
 jobs:
   round-trip:
     runs-on: ubuntu-latest
+    # Job outputs are readable through `needs` even when the job failed, which
+    # is the whole point here: the caller wants the job number on the red run.
+    outputs:
+      job-number: ${{ steps.round-trip.outputs.job-number }}
+      workflow-id: ${{ steps.round-trip.outputs.workflow-id }}
+      pipeline-id: ${{ steps.round-trip.outputs.pipeline-id }}
     # Keep a 60-second buffer for runner setup and teardown. The action rejects
     # timeout_seconds values above the matching 1140-second cap.
     timeout-minutes: 20
@@ -66,6 +91,15 @@ jobs:
       contents: read
     steps:
       - name: Trigger and await CircleCI round-trip
+        id: round-trip
+        # `continue-on-error`, deliberately, and re-raised two steps below.
+        #
+        # A composite action that fails does not reliably publish its outputs,
+        # and the outputs are wanted on exactly the runs where it fails. So the
+        # step is allowed to finish, the outputs are captured, and the verdict
+        # is reproduced by the step below from the action's own exit code — the
+        # job still ends red, with `steps.round-trip.outcome` holding the truth.
+        continue-on-error: true
         # Pin the internal action to the post-merge release commit. Callers pin
         # this reusable workflow to the follow-up commit that contains this ref.
         uses: ParamountDataManagement/.github/.github/actions/circleci-round-trip@b2bb89190a2f2ab2bbb9460335b04a2bbfe28376
@@ -82,3 +116,29 @@ jobs:
         env:
           CIRCLECI_API_TOKEN: ${{ secrets.CIRCLECI_API_TOKEN }}
           CIRCLECI_MAX_TIMEOUT_SECONDS: "1140"
+
+      # Which CircleCI job holds the results is said by round_trip.sh itself,
+      # inside the step above, rather than by a step here: the three-way choice
+      # between "here is the number", "the workflow ran but its job could not be
+      # identified" and "no workflow at all" is logic, and no harness in this
+      # repo runs a workflow `run:` block. In the script the existing tests
+      # assert on each branch. The log line lands in this same job either way.
+
+      - name: Re-raise the round-trip's verdict
+        # The `continue-on-error` above is undone here, with the action's own
+        # exit code rather than a bare 1, so 1/3/4/5 keep meaning what
+        # round_trip.sh documents them to mean.
+        #
+        # No sanitizing branch, on purpose. `failure-code` is written only when
+        # round_trip.sh failed, so it is never "0" and never a non-number, and
+        # an output that was lost or never written arrives here as an empty
+        # string. That leaves one substitution and no logic to leave untested:
+        # anything other than a real failure code re-raises as a plain 1, and
+        # this job still ends red.
+        if: steps.round-trip.outcome != 'success'
+        env:
+          FAILURE_CODE: ${{ steps.round-trip.outputs.failure-code }}
+        run: |
+          set -euo pipefail
+          echo "::error title=CircleCI round-trip failed::round_trip.sh exited ${FAILURE_CODE:-1}." >&2
+          exit "${FAILURE_CODE:-1}"
