@@ -117,37 +117,28 @@ jobs:
           CIRCLECI_API_TOKEN: ${{ secrets.CIRCLECI_API_TOKEN }}
           CIRCLECI_MAX_TIMEOUT_SECONDS: "1140"
 
-      - name: Say which CircleCI job the results are in
-        # A caller reading `job-number: ''` in its own log should not have to
-        # guess whether the action failed to report or there was nothing to
-        # report. Say which, once, where the reader already is.
-        if: always()
-        env:
-          JOB_NUMBER: ${{ steps.round-trip.outputs.job-number }}
-          WORKFLOW_ID: ${{ steps.round-trip.outputs.workflow-id }}
-        run: |
-          set -euo pipefail
-          if [ -n "${JOB_NUMBER}" ]; then
-            echo "CircleCI job number: ${JOB_NUMBER} (workflow ${WORKFLOW_ID})"
-          elif [ -n "${WORKFLOW_ID}" ]; then
-            echo "::warning title=No CircleCI job number::Workflow ${WORKFLOW_ID} ran but its job could not be identified; callers will not be able to fetch its artifacts."
-          else
-            echo "::warning title=No CircleCI job number::No CircleCI workflow was identified, so there are no artifacts to fetch."
-          fi
+      # Which CircleCI job holds the results is said by round_trip.sh itself,
+      # inside the step above, rather than by a step here: the three-way choice
+      # between "here is the number", "the workflow ran but its job could not be
+      # identified" and "no workflow at all" is logic, and no harness in this
+      # repo runs a workflow `run:` block. In the script the existing tests
+      # assert on each branch. The log line lands in this same job either way.
 
       - name: Re-raise the round-trip's verdict
         # The `continue-on-error` above is undone here, with the action's own
         # exit code rather than a bare 1, so 1/3/4/5 keep meaning what
         # round_trip.sh documents them to mean.
+        #
+        # No sanitizing branch, on purpose. `failure-code` is written only when
+        # round_trip.sh failed, so it is never "0" and never a non-number, and
+        # an output that was lost or never written arrives here as an empty
+        # string. That leaves one substitution and no logic to leave untested:
+        # anything other than a real failure code re-raises as a plain 1, and
+        # this job still ends red.
         if: steps.round-trip.outcome != 'success'
         env:
-          EXIT_CODE: ${{ steps.round-trip.outputs.exit-code }}
+          FAILURE_CODE: ${{ steps.round-trip.outputs.failure-code }}
         run: |
           set -euo pipefail
-          CODE="${EXIT_CODE:-1}"
-          case "${CODE}" in
-            ''|*[!0-9]*) CODE=1 ;;
-            0) CODE=1 ;;
-          esac
-          echo "::error title=CircleCI round-trip failed::round_trip.sh exited ${CODE}." >&2
-          exit "${CODE}"
+          echo "::error title=CircleCI round-trip failed::round_trip.sh exited ${FAILURE_CODE:-1}." >&2
+          exit "${FAILURE_CODE:-1}"

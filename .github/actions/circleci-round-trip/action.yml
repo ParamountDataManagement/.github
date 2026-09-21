@@ -56,12 +56,20 @@ outputs:
     value: ${{ steps.round-trip.outputs.pipeline-id }}
   exit-code:
     description: >-
-      round_trip.sh's own exit code. The reusable workflow runs this action with
-      continue-on-error so the outputs above survive a red round-trip, then
-      re-raises this code — without it that re-raise would flatten every
-      distinct failure (1 failed, 3 never ran, 4 timed out, 5 unverified) into
-      a bare 1.
+      round_trip.sh's own exit code, on every run including the green one. For
+      reading; the re-raise uses failure-code below.
     value: ${{ steps.round-trip.outputs.exit-code }}
+  failure-code:
+    description: >-
+      The code to re-raise, written ONLY when round_trip.sh failed, so it is
+      never "0" and never a non-number. The reusable workflow runs this action
+      with continue-on-error so the outputs above survive a red round-trip, then
+      re-raises with `exit "${FAILURE_CODE:-1}"` — without this code that
+      re-raise would flatten every distinct failure (1 failed, 3 never ran,
+      4 timed out, 5 unverified) into a bare 1, and without the "only on
+      failure" rule it would need a sanitizing branch that no test in this repo
+      could reach.
+    value: ${{ steps.round-trip.outputs.failure-code }}
 
 runs:
   using: composite
