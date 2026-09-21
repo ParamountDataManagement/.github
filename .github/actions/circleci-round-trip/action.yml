@@ -39,10 +39,35 @@ inputs:
     required: false
     default: "3"
 
+outputs:
+  job-number:
+    description: >-
+      CircleCI job number of the round-trip job, for the artifacts API
+      (GET /project/{slug}/{job-number}/artifacts). Empty when the workflow
+      never became visible, or when its job could not be identified
+      unambiguously — a consumer must treat empty as "no results to fetch"
+      rather than as a job number.
+    value: ${{ steps.round-trip.outputs.job-number }}
+  workflow-id:
+    description: CircleCI workflow id that was waited on. Empty if none appeared.
+    value: ${{ steps.round-trip.outputs.workflow-id }}
+  pipeline-id:
+    description: CircleCI pipeline id created by this action.
+    value: ${{ steps.round-trip.outputs.pipeline-id }}
+  exit-code:
+    description: >-
+      round_trip.sh's own exit code. The reusable workflow runs this action with
+      continue-on-error so the outputs above survive a red round-trip, then
+      re-raises this code — without it that re-raise would flatten every
+      distinct failure (1 failed, 3 never ran, 4 timed out, 5 unverified) into
+      a bare 1.
+    value: ${{ steps.round-trip.outputs.exit-code }}
+
 runs:
   using: composite
   steps:
     - name: Trigger and await CircleCI round-trip
+      id: round-trip
       shell: bash
       env:
         CIRCLECI_PROJECT: ${{ inputs.project }}

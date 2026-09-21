@@ -125,6 +125,21 @@ if [[ "$post" == true ]]; then
   exit "${CURL_POST_STATUS:-0}"
 fi
 
+# The job lookup is a GET like the polls are, but it must not consume a poll
+# slot: doing so would shift every poll-N fixture by one as soon as a case gave
+# its workflow an id, and the shift would look like a polling bug.
+for arg in "$@"; do
+  if [[ "$arg" == */job ]]; then
+    printf '%s\n' "$*" >>"$CURL_ARGS"
+    if [[ -s "${CURL_JOB_STATUS:-/nonexistent}" ]]; then
+      cat "${CURL_JOB_RESPONSE}" 2>/dev/null || true
+      exit "$(<"$CURL_JOB_STATUS")"
+    fi
+    cat "${CURL_JOB_RESPONSE}" 2>/dev/null || true
+    exit 0
+  fi
+done
+
 count_file="$CURL_POLL_DIR/count"
 count=0
 if [[ -f "$count_file" ]]; then
@@ -158,7 +173,18 @@ new_case() {
   export CURL_ARGS="$case_dir/args"
   export CURL_POST_RESPONSE="$case_dir/post.json"
   export CURL_POLL_DIR="$case_dir/polls"
+  export CURL_JOB_RESPONSE="$case_dir/job.json"
+  export CURL_JOB_STATUS="$case_dir/job.status"
+  # Every case gets one, so a case that forgets to look at it still proves the
+  # writes are harmless where GITHUB_OUTPUT exists.
+  export GITHUB_OUTPUT="$case_dir/github_output"
+  : >"$GITHUB_OUTPUT"
   export PATH="$case_dir:$real_path"
+}
+
+# The last value wins, matching how GitHub Actions reads the file.
+output_value() {
+  sed -nE "s/^$1=(.*)$/\\1/p" "$case_dir/github_output" | tail -1
 }
 
 run_action_values() {
@@ -177,6 +203,7 @@ run_action_values() {
       CIRCLECI_POLL_SECONDS="$poll" \
       CIRCLECI_EMPTY_GRACE_SECONDS="$grace" \
       CIRCLECI_MAX_TRANSIENT_FAILURES="$transient_limit" \
+      GITHUB_OUTPUT="$GITHUB_OUTPUT" \
       "$action_script" 2>&1
   )
   status=$?
@@ -438,5 +465,157 @@ for bad_format in "" "Excel" "excel;true" "../aces"; do
   assert_contains "$format_output" "CIRCLECI_ROUND_TRIP_FORMAT"
   [[ ! -s "$CURL_ARGS" ]] || fail "format '$bad_format' reached curl"
 done
+
+# ---------------------------------------------------------------------------
+# Identity outputs.
+#
+# These exist so a caller can fetch the round-trip's artifacts, and the caller
+# that needs them most is the one whose round-trip went RED — import-pipeline-
+# tests' Lee Rocky hand-off, which filed nothing on a red night because it had
+# no JUnit and so no failing test to name. Every case below therefore checks
+# the outputs on a failing run as well as a passing one.
+# ---------------------------------------------------------------------------
+
+# A FAILED round-trip still reports where its results are. This is the case the
+# whole feature is for; a success-only assertion would pass with the emit moved
+# to the happy path, which is exactly the bug.
+new_case
+printf '%s\n' '{"id":"pipeline-red"}' >"$CURL_POST_RESPONSE"
+printf '%s\n' '{"items":[{"name":"excel-round-trip","status":"failed","id":"wf-red"}]}' >"$CURL_POLL_DIR/poll-1.json"
+printf '%s\n' '{"items":[{"name":"excel-round-trip","job_number":4242}]}' >"$CURL_JOB_RESPONSE"
+run_action
+[[ $(<"$case_dir/status") == 1 ]] || fail "red identity case exited $(<"$case_dir/status")"
+[[ "$(output_value job-number)" == "4242" ]] \
+  || fail "a failed round-trip did not report its job number: '$(output_value job-number)'"
+[[ "$(output_value workflow-id)" == "wf-red" ]] \
+  || fail "a failed round-trip did not report its workflow id"
+[[ "$(output_value pipeline-id)" == "pipeline-red" ]] \
+  || fail "a failed round-trip did not report its pipeline id"
+[[ "$(output_value exit-code)" == "1" ]] \
+  || fail "a failed round-trip reported exit-code '$(output_value exit-code)'"
+assert_contains "$(grep -F '/job' "$CURL_ARGS")" "/workflow/wf-red/job"
+
+# A passing round-trip reports the same identity, with exit-code 0.
+new_case
+printf '%s\n' '{"id":"pipeline-green"}' >"$CURL_POST_RESPONSE"
+printf '%s\n' '{"items":[{"name":"excel-round-trip","status":"success","id":"wf-green"}]}' >"$CURL_POLL_DIR/poll-1.json"
+printf '%s\n' '{"items":[{"name":"excel-round-trip","job_number":7}]}' >"$CURL_JOB_RESPONSE"
+run_action
+[[ $(<"$case_dir/status") == 0 ]] || fail "green identity case exited $(<"$case_dir/status")"
+[[ "$(output_value job-number)" == "7" ]] || fail "green run did not report its job number"
+[[ "$(output_value exit-code)" == "0" ]] || fail "green run reported a non-zero exit-code"
+
+# The job number is selected BY NAME. A workflow holding several jobs must not
+# hand back whichever came first -- that would report another job's artifacts
+# as this round-trip's.
+new_case
+printf '%s\n' '{"id":"pipeline-multi"}' >"$CURL_POST_RESPONSE"
+printf '%s\n' '{"items":[{"name":"excel-round-trip","status":"success","id":"wf-multi"}]}' >"$CURL_POLL_DIR/poll-1.json"
+printf '%s\n' '{"items":[{"name":"setup","job_number":10},{"name":"excel-round-trip","job_number":11}]}' >"$CURL_JOB_RESPONSE"
+run_action
+[[ "$(output_value job-number)" == "11" ]] \
+  || fail "job number was not selected by name: '$(output_value job-number)'"
+
+# One job under a different name is unambiguous, so it is used.
+new_case
+printf '%s\n' '{"id":"pipeline-sole"}' >"$CURL_POST_RESPONSE"
+printf '%s\n' '{"items":[{"name":"excel-round-trip","status":"success","id":"wf-sole"}]}' >"$CURL_POLL_DIR/poll-1.json"
+printf '%s\n' '{"items":[{"name":"something-else","job_number":55}]}' >"$CURL_JOB_RESPONSE"
+run_action
+[[ "$(output_value job-number)" == "55" ]] \
+  || fail "the sole job was not used as the job number: '$(output_value job-number)'"
+
+# SEVERAL jobs, none matching the name, is ambiguous. Empty, never a guess: an
+# empty number makes a consumer skip the fetch, a wrong one makes it report
+# some other job's results as this round-trip's.
+new_case
+printf '%s\n' '{"id":"pipeline-ambiguous"}' >"$CURL_POST_RESPONSE"
+printf '%s\n' '{"items":[{"name":"excel-round-trip","status":"success","id":"wf-amb"}]}' >"$CURL_POLL_DIR/poll-1.json"
+printf '%s\n' '{"items":[{"name":"a","job_number":1},{"name":"b","job_number":2}]}' >"$CURL_JOB_RESPONSE"
+run_action
+[[ $(<"$case_dir/status") == 0 ]] || fail "ambiguous jobs changed the verdict"
+[[ -z "$(output_value job-number)" ]] \
+  || fail "ambiguous jobs produced a guessed job number: '$(output_value job-number)'"
+
+# The lookup is best-effort and must never change the round-trip's verdict. A
+# green round-trip whose job lookup 500s is still green.
+new_case
+printf '%s\n' '{"id":"pipeline-lookup-down"}' >"$CURL_POST_RESPONSE"
+printf '%s\n' '{"items":[{"name":"excel-round-trip","status":"success","id":"wf-down"}]}' >"$CURL_POLL_DIR/poll-1.json"
+printf '%s\n' '{}' >"$CURL_JOB_RESPONSE"
+printf '%s\n' '1' >"$CURL_JOB_STATUS"
+run_action
+[[ $(<"$case_dir/status") == 0 ]] \
+  || fail "a failed job lookup changed the verdict to $(<"$case_dir/status")"
+[[ -z "$(output_value job-number)" ]] || fail "a failed job lookup invented a job number"
+
+# A workflow that never appeared has nothing to fetch, and must say so by
+# emitting an empty number rather than calling the artifacts API at all.
+new_case
+printf '%s\n' '{"id":"pipeline-absent"}' >"$CURL_POST_RESPONSE"
+printf '%s\n' '{"items":[]}' >"$CURL_POLL_DIR/poll-1.json"
+run_action
+[[ $(<"$case_dir/status") == 3 ]] || fail "absent workflow exited $(<"$case_dir/status")"
+[[ -z "$(output_value job-number)" ]] || fail "absent workflow reported a job number"
+[[ "$(output_value exit-code)" == "3" ]] \
+  || fail "absent workflow reported exit-code '$(output_value exit-code)'"
+if grep -Fq '/job' "$CURL_ARGS"; then
+  fail "absent workflow still asked CircleCI for a job list"
+fi
+
+# An input-validation failure exits before any CircleCI call, and the trap must
+# survive that: unbound pipeline_id/workflow_id would abort under `set -u` and
+# turn a clean exit 2 into a confusing trap error.
+new_case
+set +e
+(
+  CIRCLECI_API_TOKEN=stub-token CIRCLECI_PROJECT=p CIRCLECI_BRANCH=main \
+    CIRCLECI_TRIGGERED_BY=t CIRCLECI_ROUND_TRIP_FORMAT=excel \
+    CIRCLECI_TIMEOUT_SECONDS=notanumber GITHUB_OUTPUT="$GITHUB_OUTPUT" \
+    "$action_script"
+) >"$case_dir/early.out" 2>&1
+early_status=$?
+set -e
+[[ "$early_status" == 2 ]] || fail "early validation failure exited $early_status"
+[[ "$(output_value exit-code)" == "2" ]] \
+  || fail "early failure did not report exit-code 2: '$(output_value exit-code)'"
+[[ -z "$(output_value job-number)" ]] || fail "early failure reported a job number"
+
+# --- the contract one and two levels up -------------------------------------
+#
+# Every case above calls round_trip.sh directly, so none of them can see the
+# action or the reusable workflow dropping the outputs on the floor.
+
+for action_output in job-number workflow-id pipeline-id exit-code; do
+  grep -Fq "  ${action_output}:" "$action_yaml" \
+    || fail "action.yml declares no ${action_output} output"
+  # shellcheck disable=SC2016  # ${{ }} is GitHub Actions syntax to match literally
+  grep -Fq "value: \${{ steps.round-trip.outputs.${action_output} }}" "$action_yaml" \
+    || fail "action.yml does not map ${action_output} from the round-trip step"
+done
+grep -Eq '^      id: round-trip$' "$action_yaml" \
+  || fail "action.yml's step has no id, so its outputs cannot be mapped"
+
+for wf_output in job-number workflow-id pipeline-id; do
+  # shellcheck disable=SC2016  # ${{ }} is GitHub Actions syntax to match literally
+  grep -Fq "value: \${{ jobs.round-trip.outputs.${wf_output} }}" "$workflow_file" \
+    || fail "the reusable workflow does not export ${wf_output} to its callers"
+  # shellcheck disable=SC2016  # ${{ }} is GitHub Actions syntax to match literally
+  grep -Fq "${wf_output}: \${{ steps.round-trip.outputs.${wf_output} }}" "$workflow_file" \
+    || fail "the reusable workflow's job does not carry ${wf_output} up from the step"
+done
+
+# The outputs are wanted on the red run, and a failing composite action does not
+# reliably publish them. These two lines are what makes the red case work, and
+# removing either leaves every direct-invocation case above green.
+grep -Fq "continue-on-error: true" "$workflow_file" \
+  || fail "the action step must not fail the job directly, or its outputs are lost on a red round-trip"
+grep -Fq "if: steps.round-trip.outcome != 'success'" "$workflow_file" \
+  || fail "the reusable workflow never re-raises the round-trip's failure"
+# ...and the re-raise must use the action's own code, not a bare 1, or 1/3/4/5
+# all arrive at the caller as the same failure.
+# shellcheck disable=SC2016  # ${{ }} is GitHub Actions syntax to match literally
+grep -Fq 'EXIT_CODE: ${{ steps.round-trip.outputs.exit-code }}' "$workflow_file" \
+  || fail "the re-raise does not read the action's exit code"
 
 echo "PASS: CircleCI round-trip action tests"

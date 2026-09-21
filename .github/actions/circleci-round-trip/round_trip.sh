@@ -20,6 +20,70 @@ empty_grace_s="${CIRCLECI_EMPTY_GRACE_SECONDS:-120}"
 max_transient="${CIRCLECI_MAX_TRANSIENT_FAILURES:-3}"
 max_timeout_s="${CIRCLECI_MAX_TIMEOUT_SECONDS:-}"
 
+# --- identity outputs -------------------------------------------------------
+#
+# Waiting for the round-trip was never the whole job. A caller that wants the
+# JUnit, the diffs or the triage report has to ask CircleCI for them, and the
+# CircleCI artifacts API is keyed on a JOB NUMBER. Nothing here said which job
+# ran, so import-pipeline-tests' Lee Rocky hand-off could not fetch the results
+# and filed no ticket on a red round-trip night — it had no failing test to
+# name, and dispatch_leerocky.py refuses to open a bug it cannot substantiate.
+#
+# Emitted from an EXIT trap rather than at the end of the happy path, because
+# the run whose job number is wanted is the RED one.
+#
+# Installed HERE, before input validation, rather than beside the names it
+# reports. Every exit path must report its code — an exit 2 that emitted
+# nothing would reach the reusable workflow's re-raise as a bare 1, and the
+# distinction between `CircleCI rejected it` and `the caller passed nonsense`
+# is exactly what that code carries.
+pipeline_id=""
+selected_workflow_id=""
+workflow_name=""
+
+emit_output() {
+  [[ -n "${GITHUB_OUTPUT:-}" ]] || return 0
+  printf '%s=%s\n' "$1" "$2" >>"$GITHUB_OUTPUT"
+}
+
+# The round-trip workflow holds exactly one job, named after the workflow. Ask
+# by name; fall back to the sole job when there is exactly one, so a caller
+# whose CircleCI config names its job differently still gets a number. Anything
+# else answers empty rather than guessing: an empty number is a consumer that
+# skips the download and says so, a wrong one is a consumer that reports some
+# other job's results as this round-trip's.
+#
+# The `|| return 0` on the curl is belt-and-braces and says so rather than
+# pretending otherwise: called from the EXIT trap, which ends with an explicit
+# `return "$code"`, a `set -e` abort here could not change the verdict either
+# way — a mutation removing it is not observable. It is kept so the function
+# stays safe to call from somewhere that is not the trap.
+lookup_job_number() {
+  local workflow_id=$1 body
+  [[ -n "$workflow_id" ]] || return 0
+  body=$(curl --fail --silent --show-error --max-time 30 \
+    -H "Circle-Token: ${CIRCLECI_API_TOKEN}" \
+    "$api_base/workflow/$workflow_id/job" 2>/dev/null) || return 0
+  printf '%s' "$body" | jq -r --arg name "$workflow_name" '
+    (.items // []) as $items
+    | ( [$items[] | select(.name == $name) | .job_number]
+        + (if ($items | length) == 1 then [$items[0].job_number] else [] end) )
+    | map(select(. != null)) | (.[0] // "") | tostring
+  ' 2>/dev/null || true
+}
+
+on_exit() {
+  local code=$?
+  emit_output exit-code "$code"
+  emit_output pipeline-id "$pipeline_id"
+  emit_output workflow-id "$selected_workflow_id"
+  emit_output job-number "$(lookup_job_number "$selected_workflow_id")"
+  # The trap must never change the script's verdict.
+  return "$code"
+}
+trap on_exit EXIT
+# ----------------------------------------------------------------------------
+
 # Bash arithmetic treats untrusted strings as expressions. Validate and
 # normalize every numeric input before using it in arithmetic or sleep.
 parse_uint() {
@@ -165,7 +229,11 @@ while :; do
   transient=0
 
   total=$(jq -er 'length' <<<"$workflow_items")
-  status=$(jq -r --arg name "$workflow_name" '[.[] | select(.name == $name) | .status] | last // empty' <<<"$workflow_items")
+  # One jq pass for both, so the id can never belong to a different workflow
+  # than the status that decided this iteration.
+  selected=$(jq -c --arg name "$workflow_name" '[.[] | select(.name == $name)] | last // {}' <<<"$workflow_items")
+  status=$(jq -r '.status // empty' <<<"$selected")
+  selected_workflow_id=$(jq -r '.id // empty' <<<"$selected")
 
   case "$status" in
     success)
