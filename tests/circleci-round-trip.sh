@@ -57,6 +57,24 @@ git -C "$root_dir" show "$action_ref:.github/actions/circleci-round-trip/action.
 git -C "$root_dir" show "$action_ref:.github/actions/circleci-round-trip/round_trip.sh" \
   | grep -Fq 'CIRCLECI_ROUND_TRIP_FORMAT' \
   || fail "the pinned action release does not read CIRCLECI_ROUND_TRIP_FORMAT: $action_ref"
+# The same binding for the outputs release (#11). Without it, reverting the pin
+# to the `format` release leaves every assertion below green while the action
+# declares none of the outputs the workflow maps -- the caller then reads an
+# empty job-number on every run and cannot tell that from "nothing to fetch",
+# which is the exact failure this release exists to end (PR #12 review).
+pinned_action_yaml=$(git -C "$root_dir" show "$action_ref:.github/actions/circleci-round-trip/action.yml")
+pinned_round_trip=$(git -C "$root_dir" show "$action_ref:.github/actions/circleci-round-trip/round_trip.sh")
+for pinned_output in job-number workflow-id pipeline-id exit-code failure-code; do
+  grep -Eq "^  ${pinned_output}:" <<<"$pinned_action_yaml" \
+    || fail "the pinned action release does not declare the ${pinned_output} output: $action_ref"
+  # Declared but unmapped is the same outage with a friendlier diff.
+  grep -Fq "value: \${{ steps.round-trip.outputs.${pinned_output} }}" <<<"$pinned_action_yaml" \
+    || fail "the pinned action release does not map ${pinned_output} from its step: $action_ref"
+  # ...and the script has to be the release that WRITES them, not merely one
+  # whose action.yml mentions them.
+  grep -Fq "emit_output ${pinned_output} " <<<"$pinned_round_trip" \
+    || fail "the pinned action release never writes ${pinned_output}: $action_ref"
+done
 
 grep -Fq "post-merge commit on" "$root_dir/.github/CIRCLECI-ROUND-TRIP-RELEASE.md" \
   || fail "release contract does not require callers to use the post-merge main commit"
