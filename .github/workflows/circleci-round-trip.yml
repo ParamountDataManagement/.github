@@ -102,7 +102,7 @@ jobs:
         continue-on-error: true
         # Pin the internal action to the post-merge release commit. Callers pin
         # this reusable workflow to the follow-up commit that contains this ref.
-        uses: ParamountDataManagement/.github/.github/actions/circleci-round-trip@b2bb89190a2f2ab2bbb9460335b04a2bbfe28376
+        uses: ParamountDataManagement/.github/.github/actions/circleci-round-trip@2c4adb338dd1dbe7e70c8a5fbcd3d03666c57250
         with:
           project: ${{ inputs.project }}
           branch: ${{ inputs.branch }}

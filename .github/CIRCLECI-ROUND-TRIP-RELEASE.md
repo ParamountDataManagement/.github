@@ -26,10 +26,30 @@ A protected release tag may replace these SHA pins later.
 |---|---|---|
 | Initial | `453f0c3d6871c88428aae5b6d49c92efaf2902ad` | the follow-up that pinned it |
 | `format` selection (#8, #9) | `b2bb89190a2f2ab2bbb9460335b04a2bbfe28376` | the commit #9 merges as |
+| job-number outputs (#11) | `2c4adb338dd1dbe7e70c8a5fbcd3d03666c57250` | the commit this follow-up merges as |
 
 The reusable workflow caps `timeout_seconds` at 1140 seconds. Its GitHub job
 has a 20-minute timeout, leaving 60 seconds for runner setup and teardown.
 Inputs are validated as decimal integers before any shell arithmetic.
+
+## Job-number outputs
+
+The action reports `job-number`, `workflow-id`, `pipeline-id`, `exit-code` and
+`failure-code`; the reusable workflow re-exports the first three to callers.
+They exist so a caller can reach the CircleCI artifacts API, which is keyed on a
+job number — without one, import-pipeline-tests' round-trip hand-off could learn
+that a night went red and nothing else, so it filed no bug and went green.
+
+They are emitted from an EXIT trap, because the run whose job number is wanted
+is the red one. The workflow runs the action with `continue-on-error` and
+re-raises `failure-code` in the next step: a failing composite action does not
+reliably publish its outputs, and these are wanted on exactly the runs where it
+fails. The job still ends red — `steps.round-trip.outcome` holds the pre-
+`continue-on-error` result, and branch protection sees the job.
+
+**An empty `job-number` is a real answer**, not a reporting failure: no workflow
+appeared, or its job could not be identified without guessing. A caller must
+branch on empty rather than paste it into a URL.
 
 ## Format selection
 
