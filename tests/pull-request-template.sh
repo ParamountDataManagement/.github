@@ -59,4 +59,56 @@ for line in '- [ ] **Regression test added**' '- [ ] **Regression exception**' '
 done
 grep -Fq 'Tick exactly one' <<<"$block" || fail "the Regression coverage section must say 'Tick exactly one'"
 
-echo "pull_request_template.md: contract lines present, nothing pre-ticked"
+
+# --- TDD on GenAI-authored work (CU-86b9tr93d) -------------------------------
+# The second block, beside 9.3's. A human reviewer is the only gate on
+# agent-written code, so the claim they are reading has to be on the PR and has
+# to be rendered — not buried in an HTML comment they never see.
+
+grep -Fq -- '## TDD on GenAI-authored work' "$template" \
+  || fail "missing the '## TDD on GenAI-authored work' section"
+
+# Alongside 9.3's block, and after it: the regression question is asked of every
+# PR, the TDD question only of agent-written ones.
+awk '/^## Regression coverage/{r=NR} /^## TDD on GenAI-authored work/{t=NR} END{exit !(r && t && t > r)}' "$template" \
+  || fail "'## TDD on GenAI-authored work' must follow the '## Regression coverage' section"
+
+tdd_block=$(awk '/^## TDD on GenAI-authored work/{f=1;next} /^## /{f=0} f' "$template")
+[[ -n "$tdd_block" ]] || fail "the TDD section is empty"
+
+# The label that makes the block required, stated as prose in the template body.
+# shellcheck disable=SC2016  # backticks are markdown code spans to match literally
+grep -Fq -- 'Required on PRs labeled `genai-authored`. Tick exactly one.' <<<"$tdd_block" \
+  || fail "the TDD section must state 'Required on PRs labeled \`genai-authored\`. Tick exactly one.'"
+
+# The three options, verbatim. The first is the claim Story 10.3 exists to put in
+# front of a reviewer; the wording is the claim, so it is pinned whole.
+tdd_confirm='- [ ] **Red→Green TDD followed** — every behaviour change here was written test-first: the test ran and failed for the right reason before the implementation, then passed unchanged'
+grep -Fq -- "$tdd_confirm" <<<"$tdd_block" \
+  || fail "the confirmation line must read exactly: $tdd_confirm"
+grep -Fq -- '- [ ] **TDD exemption** — trivial change, emergency hotfix (tests follow within 48h, ClickUp task linked), or refactor already covered by tests. Justification: <!--' <<<"$tdd_block" \
+  || fail "the exemption line must name the three TESTING_STANDARDS.md exemptions and carry a 'Justification:' placeholder"
+grep -Fq -- '- [ ] No GenAI-authored code in this PR' <<<"$tdd_block" \
+  || fail "the third option must be '- [ ] No GenAI-authored code in this PR'"
+
+# The policy the checkbox is a claim about.
+grep -Fq 'https://github.com/ParamountDataManagement/pdm-claude-standards/blob/main/TESTING_STANDARDS.md' "$template" \
+  || fail "the template must link TESTING_STANDARDS.md, where Red-Green TDD is mandated"
+
+# NOT 'Reason:'. pdm-ci-tools' regression-evidence check takes the first ticked
+# exception line by that token; a second one here would hand it the wrong line.
+justification_lines=$(grep -c 'Justification:' "$template" || true)
+[[ "$justification_lines" == "1" ]] || fail "expected exactly one 'Justification:' line, found $justification_lines"
+
+# Visible on a freshly-opened PR: with every HTML comment stripped — which is what
+# GitHub renders — the requirement and all three boxes are still there.
+rendered=$(perl -0777 -pe 's/<!--.*?-->//gs' "$template")
+# shellcheck disable=SC2016  # backticks are markdown code spans to match literally
+grep -Fq -- 'Required on PRs labeled `genai-authored`. Tick exactly one.' <<<"$rendered" \
+  || fail "the 'genai-authored' requirement must render — it cannot live inside an HTML comment"
+grep -Fq -- "$tdd_confirm" <<<"$rendered" || fail "the TDD confirmation checkbox must render"
+grep -Fq -- '- [ ] **TDD exemption**' <<<"$rendered" || fail "the TDD exemption checkbox must render"
+grep -Fq -- '- [ ] No GenAI-authored code in this PR' <<<"$rendered" || fail "the third TDD option must render"
+
+
+echo "pull_request_template.md: regression + GenAI TDD contract lines present, nothing pre-ticked"
