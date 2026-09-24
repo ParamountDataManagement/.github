@@ -21,6 +21,20 @@
 - [ ] **Regression exception** — no practical automated test surface. Reason: <!-- replace this comment with the reason; the CI check reads this line -->
 - [ ] Not a bug fix
 
+## TDD on GenAI-authored work
+
+Required on PRs labeled `genai-authored`. Tick exactly one.
+
+<!-- The reviewer is the final gate on agent-written code, so a ticked box here is a claim
+     you are making to them. Red->Green means the test was RUN and seen to fail for the
+     right reason before the implementation existed - not written afterwards to match it.
+     Policy:
+     https://github.com/ParamountDataManagement/pdm-claude-standards/blob/main/TESTING_STANDARDS.md -->
+
+- [ ] **Red→Green TDD followed** — every behaviour change here was written test-first: the test ran and failed for the right reason before the implementation, then passed unchanged
+- [ ] **TDD exemption** — trivial change, emergency hotfix (tests follow within 48h, ClickUp task linked), or refactor already covered by tests. Justification: <!-- replace this comment with which exemption applies and why -->
+- [ ] No GenAI-authored code in this PR
+
 ## Validation
 
 <!-- Commands run and their results, or the CI jobs that prove the change. -->
