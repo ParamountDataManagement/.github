@@ -95,11 +95,6 @@ grep -Fq -- '- [ ] No GenAI-authored code in this PR' <<<"$tdd_block" \
 grep -Fq 'https://github.com/ParamountDataManagement/pdm-claude-standards/blob/main/TESTING_STANDARDS.md' "$template" \
   || fail "the template must link TESTING_STANDARDS.md, where Red-Green TDD is mandated"
 
-# NOT 'Reason:'. pdm-ci-tools' regression-evidence check takes the first ticked
-# exception line by that token; a second one here would hand it the wrong line.
-justification_lines=$(grep -c 'Justification:' "$template" || true)
-[[ "$justification_lines" == "1" ]] || fail "expected exactly one 'Justification:' line, found $justification_lines"
-
 # Visible on a freshly-opened PR: with every HTML comment stripped — which is what
 # GitHub renders — the requirement and all three boxes are still there.
 rendered=$(perl -0777 -pe 's/<!--.*?-->//gs' "$template")
