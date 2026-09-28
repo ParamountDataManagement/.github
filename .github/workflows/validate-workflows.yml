@@ -48,3 +48,51 @@ jobs:
         run: |
           shellcheck tests/pull-request-template.sh
           ./tests/pull-request-template.sh
+
+  # The terminal fan-in over the jobs above: one context that carries their
+  # combined verdict, so adding, renaming or removing a job never has to touch a
+  # branch ruleset.
+  #
+  # IT REPORTS. WHETHER IT BLOCKS IS A SEPARATE, LATER STEP. Installing this job
+  # does not make it required — that needs an entry in pdm-ci-tools
+  # `rulesets/repo-rulesets.json`, applied with an admin credential. Until then
+  # this check can go red and the PR still merges. The order is deliberate: a
+  # ruleset naming a context the repo does not yet emit makes every PR
+  # permanently unmergeable, so the check has to exist and report first.
+  #
+  # `if: always()` is not optional. Without it one skipped dependency skips this
+  # job, a skipped job never reports its context, and the PR waits forever on a
+  # check that will not arrive.
+  #
+  # Installed by pdm-ci-tools ci/install-quality-gates.sh. The verdict lives in
+  # pdm-ci-tools lib/gate-fanin.sh; do not re-implement it here.
+  quality-gates:
+    name: quality-gates
+    runs-on: ubuntu-latest
+    needs: [actionlint]
+    if: always()
+    steps:
+      # NO actions/checkout, deliberately. The fan-in reads one environment
+      # variable — the needs context below — and touches nothing in this repo's
+      # tree. `github.action_path` inside the action resolves to GitHub's own
+      # checkout of pdm-ci-tools, which a `uses:` fetches automatically, so a
+      # checkout here clones the consumer for nothing: slower on every PR in
+      # every gated repo, and one more unpinned action in the supply chain.
+      #
+      # Verified rather than reasoned: a harness with no checkout passed on
+      # success+skipped and failed on a real failed dependency. An earlier
+      # attempt used `./actions/quality-gates` — a LOCAL path action, which does
+      # need the workspace — and failed, which proved nothing about this shape.
+      #
+      # That harness is pdm-ci-tools `lib/test-gate-fanin.sh` (26 cases over the
+      # verdict logic: success, skipped, all-skipped, failed, cancelled, an
+      # unrecognised result, a missing result key, and every malformed
+      # NEEDS_JSON including unset, empty, unparseable and `{}`) and
+      # `lib/test-check-gate-workflow.sh` (42, over the wiring). Cited, not
+      # asserted: the logic is not in THIS repo, so no test here can cover it,
+      # and duplicating the harness into every consumer is the duplication the
+      # fan-in exists to remove. Reviewers asking this repo to prove the
+      # verdict should read those files.
+      - uses: ParamountDataManagement/pdm-ci-tools/actions/quality-gates@v1
+        with:
+          needs: ${{ toJSON(needs) }}
