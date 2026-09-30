@@ -50,8 +50,12 @@ jobs:
       # ParamountDataManagement/pdm-ci-tools/actions/grep-q-pipe@v1` fails at
       # "Set up job" with "Unable to resolve action". So the fleet App mints a
       # token scoped to pdm-ci-tools (contents: read only), that checkout brings
-      # in the same v1 action, and it runs from its local path. Fork PRs receive
-      # no secrets, so on one this step fails rather than passing unchecked.
+      # in the v1 action, and it runs from its local path. Fork PRs receive no
+      # secrets, so on one this step fails rather than passing unchecked.
+      #
+      # The checkout is pinned to the commit v1 pointed at when this was
+      # reviewed, not the moving tag, so a retargeted v1 cannot turn this
+      # blocking gate into a no-op. Bump the SHA in a reviewed PR.
       - name: Mint a read-only pdm-ci-tools token
         id: pdm-ci-tools-token
         uses: actions/create-github-app-token@v2
@@ -62,11 +66,11 @@ jobs:
           repositories: pdm-ci-tools
           permission-contents: read
 
-      - name: Check out pdm-ci-tools at v1
+      - name: Check out pdm-ci-tools at v1 (d3f0f61)
         uses: actions/checkout@v4
         with:
           repository: ParamountDataManagement/pdm-ci-tools
-          ref: v1
+          ref: d3f0f6182d99adfc9740d6ba7e0b956a575c5598
           token: ${{ steps.pdm-ci-tools-token.outputs.token }}
           path: .pdm-ci-tools
           persist-credentials: false
