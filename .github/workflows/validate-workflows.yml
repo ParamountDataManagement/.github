@@ -42,6 +42,42 @@ jobs:
           shellcheck .github/actions/circleci-round-trip/round_trip.sh tests/circleci-round-trip.sh
           ./tests/circleci-round-trip.sh
 
+      # Under pipefail `writer | grep -q` reads a match that succeeded as absent;
+      # the shared pdm-ci-tools lint fails on any such pipe (CU-86bc9nnzd).
+      #
+      # This repo is public and pdm-ci-tools is private, and GitHub will not
+      # resolve a private repo's action from a public one: `uses:
+      # ParamountDataManagement/pdm-ci-tools/actions/grep-q-pipe@v1` fails at
+      # "Set up job" with "Unable to resolve action". So the fleet App mints a
+      # token scoped to pdm-ci-tools (contents: read only), that checkout brings
+      # in the v1 action, and it runs from its local path. Fork PRs receive no
+      # secrets, so on one this step fails rather than passing unchecked.
+      #
+      # The checkout is pinned to the commit v1 pointed at when this was
+      # reviewed, not the moving tag, so a retargeted v1 cannot turn this
+      # blocking gate into a no-op. Bump the SHA in a reviewed PR.
+      - name: Mint a read-only pdm-ci-tools token
+        id: pdm-ci-tools-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.PDM_FLEET_AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.PDM_FLEET_AUTOMATION_PRIVATE_KEY }}
+          owner: ParamountDataManagement
+          repositories: pdm-ci-tools
+          permission-contents: read
+
+      - name: Check out pdm-ci-tools at v1 (d3f0f61)
+        uses: actions/checkout@v4
+        with:
+          repository: ParamountDataManagement/pdm-ci-tools
+          ref: d3f0f6182d99adfc9740d6ba7e0b956a575c5598
+          token: ${{ steps.pdm-ci-tools-token.outputs.token }}
+          path: .pdm-ci-tools
+          persist-credentials: false
+
+      - name: No pipe into an early-exiting grep under pipefail
+        uses: ./.pdm-ci-tools/actions/grep-q-pipe
+
       # The org default PR template is read by pdm-ci-tools' regression-evidence
       # check and quoted by REGRESSION_TESTING_POLICY.md; pin the lines they share.
       - name: Validate the pull request template
