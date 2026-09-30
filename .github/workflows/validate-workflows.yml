@@ -53,3 +53,10 @@ jobs:
         run: |
           shellcheck tests/pull-request-template.sh
           ./tests/pull-request-template.sh
+
+      # CODEOWNERS is what gives the org promotion rulesets' code-owner review
+      # its meaning; GitHub ignores a broken one silently, so pin its one rule.
+      - name: Validate CODEOWNERS
+        run: |
+          shellcheck tests/codeowners.sh
+          ./tests/codeowners.sh
