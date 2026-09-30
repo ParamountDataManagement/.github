@@ -42,6 +42,11 @@ jobs:
           shellcheck .github/actions/circleci-round-trip/round_trip.sh tests/circleci-round-trip.sh
           ./tests/circleci-round-trip.sh
 
+      # Under pipefail `writer | grep -q` reads a match that succeeded as absent;
+      # the shared pdm-ci-tools lint fails on any such pipe (CU-86bc9nnzd).
+      - name: No pipe into an early-exiting grep under pipefail
+        uses: ParamountDataManagement/pdm-ci-tools/actions/grep-q-pipe@v1
+
       # The org default PR template is read by pdm-ci-tools' regression-evidence
       # check and quoted by REGRESSION_TESTING_POLICY.md; pin the lines they share.
       - name: Validate the pull request template
