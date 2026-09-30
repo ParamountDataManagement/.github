@@ -28,7 +28,7 @@ for shadow in "$root_dir/CODEOWNERS" "$root_dir/docs/CODEOWNERS"; do
 done
 
 # The managed-file header, so an editor learns the sweep overwrites local edits.
-head -n 1 "$codeowners" | grep -Fqx '# Managed by pdm-ci-tools rulesets/sync-codeowners.sh. Edits here are overwritten.' \
+grep -Fqx -- '# Managed by pdm-ci-tools rulesets/sync-codeowners.sh. Edits here are overwritten.' <<<"$(head -n 1 "$codeowners")" \
   || fail "the first line must be the pdm-ci-tools sync-codeowners.sh managed-file header"
 
 # Exactly one rule: the whole repository, owned by the reviewers team. Every
