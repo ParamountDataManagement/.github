@@ -7,8 +7,9 @@
 # that breaks the syntax or drops the catch-all rule would turn that requirement
 # back into a no-op without failing anything. These pins are that failure.
 #
-# The file is written by pdm-ci-tools rulesets/sync-codeowners.sh. A change to the
-# owners belongs there, and lands here as a pull request that must update this pin.
+# The file is written by pdm-github-config `rollout apply --module codeowners`. A
+# change to the owners belongs in its manifest/fleet.yaml, and lands here as a pull
+# request that must update this pin.
 set -euo pipefail
 
 root_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -28,14 +29,15 @@ for shadow in "$root_dir/CODEOWNERS" "$root_dir/docs/CODEOWNERS"; do
 done
 
 # The managed-file header, so an editor learns the sweep overwrites local edits.
-grep -Fqx -- '# Managed by pdm-ci-tools rulesets/sync-codeowners.sh. Edits here are overwritten.' <<<"$(head -n 1 "$codeowners")" \
-  || fail "the first line must be the pdm-ci-tools sync-codeowners.sh managed-file header"
+grep -Fqx -- '# Managed by pdm-github-config rollout apply --module codeowners. Edits here are overwritten.' <<<"$(head -n 1 "$codeowners")" \
+  || fail "the first line must be the pdm-github-config codeowners managed-file header"
 
-# Exactly one rule: the whole repository, owned by the reviewers team. Every
+# Exactly one rule: the whole repository, owned by the reviewers team and Lee
+# (PDMLeeRocky), so either satisfies a promotion's code-owner review. Every
 # non-blank, non-comment line is a rule, so this also rejects a stray or
 # malformed line that GitHub would skip.
 rules=$(grep -Ev '^[[:space:]]*(#|$)' "$codeowners")
-[[ "$rules" == '* @ParamountDataManagement/pdm-reviewers' ]] \
-  || fail "the only rule must be '* @ParamountDataManagement/pdm-reviewers', found: $rules"
+[[ "$rules" == '* @ParamountDataManagement/pdm-reviewers @PDMLeeRocky' ]] \
+  || fail "the only rule must be '* @ParamountDataManagement/pdm-reviewers @PDMLeeRocky', found: $rules"
 
-echo "CODEOWNERS: single catch-all rule owned by @ParamountDataManagement/pdm-reviewers"
+echo "CODEOWNERS: single catch-all rule owned by @ParamountDataManagement/pdm-reviewers and @PDMLeeRocky"
