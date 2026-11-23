@@ -68,6 +68,8 @@ jobs:
       # Fork PRs get no OIDC token, so on one this step fails rather than
       # passing unchecked.
       #
+      # The mint script and its check are tested by tests/mint-ci-reader-token.sh.
+      #
       # The checkout is pinned to the commit v1 pointed at when this was
       # reviewed, not the moving tag, so a retargeted v1 cannot turn this
       # blocking gate into a no-op. Bump the SHA in a reviewed PR.
@@ -91,29 +93,7 @@ jobs:
           APP_ID: "5322477"
           INSTALLATION_ID: "171524280"
           KMS_KEY: alias/pdm-ci-reader-app
-        run: |
-          set -euo pipefail
-          b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
-          now="$(date +%s)"
-          header="$(printf '{"alg":"RS256","typ":"JWT"}' | b64url)"
-          payload="$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' "$((now - 60))" "$((now + 540))" "$APP_ID" | b64url)"
-          signing_input="${header}.${payload}"
-          signature="$(aws kms sign --key-id "$KMS_KEY" --message-type RAW \
-            --signing-algorithm RSASSA_PKCS1_V1_5_SHA_256 \
-            --message "$(printf '%s' "$signing_input" | openssl base64 -A)" \
-            --query Signature --output text | openssl base64 -d -A | b64url)"
-          response="$(curl -fsS -X POST \
-            -H "Authorization: Bearer ${signing_input}.${signature}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/app/installations/${INSTALLATION_ID}/access_tokens")"
-          token="$(jq -r '.token // empty' <<<"$response")"
-          contents="$(jq -r '.permissions.contents // empty' <<<"$response")"
-          if [ -z "$token" ] || [ "$contents" != read ]; then
-            echo "::error title=pdm-ci-reader mint::installation token missing or not contents:read" >&2
-            exit 1
-          fi
-          echo "::add-mask::${token}"
-          printf 'token=%s\n' "$token" >> "$GITHUB_OUTPUT"
+        run: bash .github/scripts/mint-ci-reader-token.sh
 
       - name: Check out pdm-ci-tools at v1 (d3f0f61)
         uses: actions/checkout@v4
@@ -129,6 +109,11 @@ jobs:
 
       # The org default PR template is read by pdm-ci-tools' regression-evidence
       # check and quoted by REGRESSION_TESTING_POLICY.md; pin the lines they share.
+      - name: Validate the pdm-ci-reader token mint
+        run: |
+          shellcheck .github/scripts/mint-ci-reader-token.sh tests/mint-ci-reader-token.sh
+          ./tests/mint-ci-reader-token.sh
+
       - name: Validate the pull request template
         run: |
           shellcheck tests/pull-request-template.sh
