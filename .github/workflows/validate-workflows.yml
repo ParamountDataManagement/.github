@@ -9,6 +9,11 @@ on:
 jobs:
   actionlint:
     runs-on: ubuntu-latest
+    # id-token: write is the OIDC exchange behind the KMS-signed pdm-ci-reader
+    # token below; contents: read is all the rest of the job uses.
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -48,23 +53,47 @@ jobs:
       # This repo is public and pdm-ci-tools is private, and GitHub will not
       # resolve a private repo's action from a public one: `uses:
       # ParamountDataManagement/pdm-ci-tools/actions/grep-q-pipe@v1` fails at
-      # "Set up job" with "Unable to resolve action". So the fleet App mints a
-      # token scoped to pdm-ci-tools (contents: read only), that checkout brings
-      # in the v1 action, and it runs from its local path. Fork PRs receive no
-      # secrets, so on one this step fails rather than passing unchecked.
+      # "Set up job" with "Unable to resolve action". So a read-only token is
+      # minted for pdm-ci-tools, that checkout brings in the v1 action, and it
+      # runs from its local path.
+      #
+      # The token is the pdm-ci-reader App's (contents: read is its whole
+      # ceiling), signed in AWS KMS with NO stored key: the job assumes
+      # /ci-cd/pdm-ci-reader-signer through GitHub OIDC (it trusts every
+      # ParamountDataManagement repo), signs the App JWT with kms:Sign on
+      # alias/pdm-ci-reader-app, and exchanges it for an installation token.
+      # These are the steps of pdm-ci-tools' actions/mint-ci-reader-token,
+      # inlined because that action is private and this repo is public. The
+      # fleet App's stored key this used before was revoked on 2026-11-23.
+      # Fork PRs get no OIDC token, so on one this step fails rather than
+      # passing unchecked.
+      #
+      # The mint script and its check are tested by tests/mint-ci-reader-token.sh.
       #
       # The checkout is pinned to the commit v1 pointed at when this was
       # reviewed, not the moving tag, so a retargeted v1 cannot turn this
       # blocking gate into a no-op. Bump the SHA in a reviewed PR.
-      - name: Mint a read-only pdm-ci-tools token
-        id: pdm-ci-tools-token
-        uses: actions/create-github-app-token@v2
+      - name: Assume pdm-ci-reader-signer
+        id: reader-aws
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          app-id: ${{ secrets.PDM_FLEET_AUTOMATION_APP_ID }}
-          private-key: ${{ secrets.PDM_FLEET_AUTOMATION_PRIVATE_KEY }}
-          owner: ParamountDataManagement
-          repositories: pdm-ci-tools
-          permission-contents: read
+          role-to-assume: arn:aws:iam::373963237795:role/ci-cd/pdm-ci-reader-signer
+          aws-region: us-east-2
+          output-credentials: true
+          output-env-credentials: false
+
+      - name: Mint a read-only pdm-ci-tools token (KMS-signed pdm-ci-reader)
+        id: pdm-ci-tools-token
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ steps.reader-aws.outputs.aws-access-key-id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.reader-aws.outputs.aws-secret-access-key }}
+          AWS_SESSION_TOKEN: ${{ steps.reader-aws.outputs.aws-session-token }}
+          AWS_REGION: us-east-2
+          APP_ID: "5322477"
+          INSTALLATION_ID: "171524280"
+          KMS_KEY: alias/pdm-ci-reader-app
+        run: bash .github/scripts/mint-ci-reader-token.sh
 
       - name: Check out pdm-ci-tools at v1 (d3f0f61)
         uses: actions/checkout@v4
@@ -80,6 +109,11 @@ jobs:
 
       # The org default PR template is read by pdm-ci-tools' regression-evidence
       # check and quoted by REGRESSION_TESTING_POLICY.md; pin the lines they share.
+      - name: Validate the pdm-ci-reader token mint
+        run: |
+          shellcheck .github/scripts/mint-ci-reader-token.sh tests/mint-ci-reader-token.sh
+          ./tests/mint-ci-reader-token.sh
+
       - name: Validate the pull request template
         run: |
           shellcheck tests/pull-request-template.sh
